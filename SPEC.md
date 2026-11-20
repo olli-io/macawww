@@ -31,7 +31,13 @@ One Swift binary with two roles:
 - **Daemon** (`macawww daemon`): owns the windows, the cache, the players and the pause logic. Runs `NSApplication` with activation policy `.accessory` (no Dock icon, no menu bar).
 - **Client** (all other subcommands): sends one command to the daemon and prints the reply.
 
-IPC: Unix domain socket at `$TMPDIR/macawww.sock`. Protocol: one UTF-8 line per request, one line per reply. Reply starts with `ok` or `err <message>`.
+IPC: Unix domain socket at `$TMPDIR/macawww.sock` (`NSTemporaryDirectory()`, mode 0600). Protocol: JSON Lines. One connection per command: the client sends one line, the daemon sends one line, then closes. JSON escapes all control characters, so paths with spaces, tabs or newlines are safe.
+
+- Request: JSON array of strings, the subcommand and its arguments. `["img","/path/a b.gif","all"]`, `["clear","000000","all"]`, `["query"]`, `["pause"]`, `["resume"]`, `["kill"]`.
+- Reply: JSON object. `{"ok":true}` or `{"ok":false,"error":"<message>"}`.
+- `query` reply: `{"ok":true,"screens":[{"id":1,"width":3840,"height":2160,"file":"/a.gif","state":"paused","reasons":["occluded"]}]}`. A screen has `file` or `color` (`"#RRGGBB"`). `state` is `playing`, `paused`, `static` or `stopped` (loop count done). `reasons` is present only when `paused`.
+
+The client prints `query` as one text line per screen: `<id> <w>x<h> <file|color #RRGGBB> <state>[ (<reasons>)]`.
 
 Data flow:
 
@@ -60,6 +66,8 @@ One `Player` per distinct file. All screens that show the same file share one `P
 
 Exit codes: 0 = ok, 1 = daemon error, 2 = usage error, 3 = daemon not running.
 
+`--screen all` replaces all per-screen states. `macawww daemon` when a daemon already runs: message, exit 0 (so launchd does not restart it).
+
 ## 5. Wallpaper window
 
 One window per screen:
@@ -79,6 +87,8 @@ Do not scale at load. The buffer stays at the source size. The window server sca
 ## 6. Decode and cache
 
 Input formats: all formats that ImageIO reads. Multi-frame GIF, APNG and WebP animate. All others are one frame.
+
+Max size: 16384 px per side (IOSurface limit). A still image that is larger is scaled down once at decode; a larger animation is an error. Still images use `CGImageSourceCreateThumbnailAtIndex` with `kCGImageSourceCreateThumbnailWithTransform`, so the EXIF orientation applies.
 
 Steps (background queue, one frame in memory at a time, plus the previous frame):
 1. Hash the file bytes (SHA-256, CryptoKit). If a valid cache file exists, skip to §8.
@@ -132,7 +142,8 @@ Two IOSurfaces at source size, BGRA, `kIOSurfaceIsGlobal` off. Names: `front` (o
 Invariant: before the tick that shows frame `k`, `back` holds frame `k-2` (mod frameCount).
 
 On a tick for frame `k`:
-1. If diff `k` is a full frame: decompress it into `back`. Otherwise decompress diff `k-1`, then diff `k`, into `back`. Decompress straight into the locked surface rows (`compression_decode_buffer` per row block; no temp buffer for full-width rects).
+1. Lock `back`. If the lock fails, schedule a retry in 16 ms and stop this tick.
+   If diff `k` is a full frame: decompress it into `back`. Otherwise copy the rects of diff `k-1` from `front` (which holds frame `k-1`) into `back` (`memcpy`, no decode), then decompress diff `k` into `back`. Decompress straight into the locked surface rows (`compression_decode_buffer` per row block; no temp buffer for full-width rects).
 2. Unlock `back`.
 3. In a `CATransaction` with actions disabled: set `layer.contents = back` for all layers of this player.
 4. Swap `front` and `back`.
@@ -142,11 +153,17 @@ The invariant holds at loop wrap because frame 0 is full.
 
 Timer: one `DispatchSourceTimer` per player on the main queue, leeway = 10 % of the delay. The timer fires once per frame and reschedules itself. No allocation on a tick.
 
-When the invariant breaks (resume, new screen, wake): copy `front` into `back` (one `memcpy`), then continue with "apply diff `k` only" for the next tick. After that tick, the invariant holds again.
+When the invariant breaks (resume, new screen, wake): mark the player unsynced. The next tick copies `front` into `back` (one `memcpy`, skipped when diff `k` is full), then applies diff `k` only. After that tick, the invariant holds again.
 
-Static image (1 frame): fill `front` once, set `contents`, no timer, no `back` surface.
+Temp buffer: a rect decodes straight into the surface when it is full-width and the surface stride is `width × 4`. Other rects decode into one temp buffer, then copy row by row. The player allocates this buffer once, at the size of the largest such rect. IOSurface stride comes from `IOSurfaceAlignProperty`, so narrow images can have padded rows.
 
-`loopCount > 0`: stop on the last frame after the last loop.
+The surfaces are tagged sRGB (`IOSurfaceColorSpace`), the same space the decoder draws in.
+
+Static image (1 frame): fill `front` once, set `contents`, no timer, no `back` surface. Then release the mmap and the decode buffers.
+
+`loopCount > 0`: stop on the last frame after the last loop. Then release `back`, the mmap and the decode buffers, as for a static image.
+
+Pause: set `back` to `kIOSurfacePurgeableVolatile`. The kernel can take its pages. Resume: set it non-volatile. The content of `back` is not necessary, because the player is unsynced after a resume.
 
 ## 9. Pause rules
 
@@ -163,10 +180,10 @@ Static image (1 frame): fill `front` once, set `contents`, no timer, no `back` s
 | `battery` | `IOPSNotificationCreateRunLoopSource`; only if `pause_on_battery = true` | global |
 | `user` | `pause` / `resume` commands | global |
 
-On pause: cancel the timer. Keep the current frame on screen.
+On pause: cancel the timer. Keep the current frame on screen. Make `back` volatile (§8).
 On resume: restore the invariant (§8), then start the timer.
 
-Open point: the occlusion state of a desktop-level window can stay "visible" when a full-screen app covers it. Verify on macOS 14 and 15. Fallback: on `NSWorkspace.activeSpaceDidChangeNotification`, do one `CGWindowListCopyWindowInfo` check for a full-screen window on each screen. Never poll.
+Open point: the occlusion state of a desktop-level window can stay "visible" when a full-screen app covers it. Verify on macOS 14 and 15. Fallback (implemented): on `NSWorkspace.activeSpaceDidChangeNotification`, do one `CGWindowListCopyWindowInfo` check for a layer-0 window of another process with bounds equal to the display bounds, then one more check 600 ms later (after the space animation). A covered display counts as not visible. Never poll.
 
 ## 10. Display changes
 
