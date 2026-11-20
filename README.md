@@ -94,6 +94,7 @@ To try macawww without the launch agent, run `macawww daemon` in a terminal. It 
 |---|---|
 | `macawww daemon` | Start the daemon in the foreground. |
 | `macawww img <path> [--screen <id\|all>]` | Set an image as wallpaper. The default screen is `all`. |
+| `macawww <dir>` or `macawww img <dir>` | Show a list of the `.gif`, `.png` and `.jpg` files in the directory. Select one with the arrow keys and Enter. `q` cancels. |
 | `macawww clear [--color <hex>] [--screen <id\|all>]` | Set a solid colour. The default colour is `#000000`. |
 | `macawww query` | Show each screen with its size, wallpaper and state. |
 | `macawww pause` | Stop all animations. |

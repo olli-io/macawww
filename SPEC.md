@@ -56,6 +56,8 @@ One `Player` per distinct file. All screens that show the same file share one `P
 |---|---|
 | `macawww daemon` | Start the daemon (foreground). |
 | `macawww img <path> [--screen <id\|all>]` | Set wallpaper. Default `all`. |
+| `macawww img <dir> [--screen <id\|all>]` | Show a list of the images in `<dir>`. Set the selected one. |
+| `macawww <dir> [--screen <id\|all>]` | Short form of `img <dir>`. A command name has priority over a directory with the same name. |
 | `macawww clear [--color <hex>] [--screen ...]` | Solid colour. Default `#000000`. |
 | `macawww query` | Print screens, size, file, state (playing/paused + reason). |
 | `macawww pause` / `resume` | Manual pause. |
@@ -64,7 +66,9 @@ One `Player` per distinct file. All screens that show the same file share one `P
 
 `<id>` is the `CGDirectDisplayID`, as `query` shows it.
 
-Exit codes: 0 = ok, 1 = daemon error, 2 = usage error, 3 = daemon not running.
+Exit codes: 0 = ok, 1 = error or cancel, 2 = usage error, 3 = daemon not running.
+
+File list (`Picker.swift`): the files in `<dir>` with the extension `.gif`, `.png`, `.jpg` or `.jpeg` (case ignored), in Finder name order. Hidden files and subdirectories are not shown. Keys: up/down or `k`/`j` move, Enter sets the wallpaper, `q`, Esc or Ctrl-C cancel (exit 1). Keys come from stdin and the list goes to stderr, so both must be a terminal. The list scrolls when it is longer than the terminal. The client checks for the daemon before it shows the list.
 
 `--screen all` replaces all per-screen states. `macawww daemon` when a daemon already runs: message, exit 0 (so launchd does not restart it).
 
@@ -249,6 +253,7 @@ Sources/macawww/
   main.swift          CLI parse, dispatch
   Daemon.swift        app setup, socket server, state file
   Client.swift        socket client
+  Picker.swift        file list for `img <dir>`
   Screens.swift       window per screen, reconcile
   Decoder.swift       ImageIO → frame encoder → cache writer
   Diff.swift          tile diff, rect merge

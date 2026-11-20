@@ -3,7 +3,8 @@ import Foundation
 let usageText = """
 usage: macawww <command>
   daemon                                       start the daemon (foreground)
-  img <path> [--screen <id|all>]               set wallpaper
+  img <path|dir> [--screen <id|all>]           set wallpaper; a directory shows a file list
+  <dir> [--screen <id|all>]                    short form of img <dir>
   clear [--color <hex>] [--screen <id|all>]    solid colour (default #000000)
   query                                        show screens and state
   pause | resume                               manual pause
@@ -38,6 +39,28 @@ func screenArg(_ o: [String: String]) -> String {
     return s
 }
 
+func isDirectory(_ path: String) -> Bool {
+    var d: ObjCBool = false
+    return FileManager.default.fileExists(atPath: path, isDirectory: &d) && d.boolValue
+}
+
+/// `img <path|dir>`. For a directory, the user selects a file from a list (SPEC §4).
+func imgCommand(_ args: ArraySlice<String>) -> Never {
+    let (pos, o) = parseArgs(args, options: ["screen"])
+    guard pos.count == 1 else { usage() }
+    let screen = screenArg(o)
+    var url = URL(fileURLWithPath: pos[0]).standardizedFileURL
+    if isDirectory(url.path) {
+        guard Client.isRunning() else {
+            eprint("daemon not running")
+            exit(3)
+        }
+        guard let file = Picker.run(dir: url) else { exit(1) }
+        url = file
+    }
+    exit(Client.send(["img", url.path, screen]))
+}
+
 let cliArgs = CommandLine.arguments.dropFirst()
 let cliCommand = cliArgs.first ?? ""
 let cliRest = cliArgs.dropFirst()
@@ -47,10 +70,7 @@ case "daemon":
     guard cliRest.isEmpty else { usage() }
     Daemon.run()
 case "img":
-    let (pos, o) = parseArgs(cliRest, options: ["screen"])
-    guard pos.count == 1 else { usage() }
-    let path = URL(fileURLWithPath: pos[0]).standardizedFileURL.path
-    exit(Client.send(["img", path, screenArg(o)]))
+    imgCommand(cliRest)
 case "decode":
     // Internal: the daemon starts this as a child process (SPEC §6). Not in the usage text.
     let a = Array(cliRest)
@@ -85,5 +105,7 @@ case "help", "-h", "--help":
     print(usageText)
     exit(0)
 default:
-    usage()
+    // Short form: `macawww <dir>` = `macawww img <dir>`.
+    guard isDirectory(cliCommand) else { usage() }
+    imgCommand(cliArgs)
 }
