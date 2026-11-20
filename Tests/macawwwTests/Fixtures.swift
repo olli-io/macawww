@@ -95,8 +95,30 @@ enum Fixture {
         return out
     }
 
+    /// Point sample of a rendered frame, as the decoder stores it.
+    static func shrink(_ px: [UInt8], w: Int, h: Int, n: Int) -> [UInt8] {
+        var out = [UInt8](repeating: 0, count: (w / n) * (h / n) * 4)
+        px.withUnsafeBytes { s in out.withUnsafeMutableBytes { d in
+            Upscale.shrink(s.baseAddress!, width: w, height: h, n: n, to: d.baseAddress!)
+        } }
+        return out
+    }
+
+    /// Each pixel of `px` (w × h) becomes an n×n block.
+    static func upscale(_ px: [UInt8], w: Int, h: Int, n: Int) -> [UInt8] {
+        var out = [UInt8](repeating: 0, count: px.count * n * n)
+        for y in 0..<h * n {
+            for x in 0..<w * n {
+                let s = ((y / n) * w + x / n) * 4, d = (y * w * n + x) * 4
+                for c in 0..<4 { out[d + c] = px[s + c] }
+            }
+        }
+        return out
+    }
+
     /// GIF with a moving square. `same[i]` true: frame i equals frame i-1.
-    static func gif(w: Int, h: Int, delays: [Double], same: [Bool]) -> URL {
+    /// `blank0`: frame 0 has no square (one colour).
+    static func gif(w: Int, h: Int, delays: [Double], same: [Bool], blank0: Bool = false) -> URL {
         let url = tmpURL("gif")
         let dest = CGImageDestinationCreateWithURL(url as CFURL, "com.compuserve.gif" as CFString, delays.count, nil)!
         CGImageDestinationSetProperties(dest, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
@@ -109,7 +131,7 @@ enum Fixture {
             ctx.setFillColor(red: 0.1, green: 0.2, blue: 0.6, alpha: 1)
             ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
             ctx.setFillColor(red: 1, green: 0.9, blue: 0.1, alpha: 1)
-            ctx.fill(CGRect(x: pos * 6, y: 4, width: 8, height: 8))
+            if !(blank0 && i == 0) { ctx.fill(CGRect(x: pos * 6, y: 4, width: 8, height: 8)) }
             let props = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: d]] as CFDictionary
             CGImageDestinationAddImage(dest, ctx.makeImage()!, props)
         }

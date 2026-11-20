@@ -40,7 +40,9 @@ struct CacheFrame: Equatable {
 /// `.mcw` file format constants, paths and eviction (SPEC §7).
 enum Cache {
     static let magic: UInt32 = 0x5757_434D  // bytes "MCWW"
-    static let version: UInt16 = 1
+    static let version: UInt16 = 3
+    /// Header flag: the decoder stored an integer upscale at 1× (SPEC §6 step 5).
+    static let flagPixelArt = 1
     static let headerSize = 32
     static let frameEntrySize = 8
     static let rectEntrySize = 20  // 4 × u16, u64, u32
@@ -58,7 +60,7 @@ enum Cache {
         let fm = FileManager.default
         let keys: [URLResourceKey] = [.contentAccessDateKey, .fileSizeKey]
         guard let urls = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys) else { return }
-        var files: [(url: URL, date: Date, size: Int)] = urls.filter { $0.pathExtension == "mcw" }.map {
+        var files: [(url: URL, date: Date, size: Int)] = urls.filter { ["mcw", "png"].contains($0.pathExtension) }.map {
             let v = try? $0.resourceValues(forKeys: Set(keys))
             return ($0, v?.contentAccessDate ?? .distantPast, v?.fileSize ?? 0)
         }
@@ -123,13 +125,13 @@ final class CacheWriter {
         CacheWriter.put(UInt32(count), &index)
     }
 
-    func finish(width: Int, height: Int, loopCount: Int) throws {
+    func finish(width: Int, height: Int, loopCount: Int, pixelArt: Bool = false) throws {
         let indexOffset = pos
         try write(index)
         var h: [UInt8] = []
         CacheWriter.put(Cache.magic, &h)
         CacheWriter.put(Cache.version, &h)
-        CacheWriter.put(UInt16(0), &h)
+        CacheWriter.put(UInt16(pixelArt ? Cache.flagPixelArt : 0), &h)
         CacheWriter.put(UInt32(width), &h)
         CacheWriter.put(UInt32(height), &h)
         CacheWriter.put(UInt32(frames), &h)
@@ -176,6 +178,7 @@ final class CacheFile {
     let width: Int
     let height: Int
     let loopCount: Int
+    let pixelArt: Bool
     let frames: [CacheFrame]
     let rects: [CacheRect]
     var frameCount: Int { frames.count }
@@ -203,6 +206,7 @@ final class CacheFile {
         width = r.width
         height = r.height
         loopCount = r.loopCount
+        pixelArt = r.pixelArt
         frames = r.frames
         rects = r.rects
         // Set atime to now (UTIME_NOW = -1), keep mtime (UTIME_OMIT = -2). Used by LRU eviction.
@@ -214,6 +218,7 @@ final class CacheFile {
 
     struct Parsed {
         var width = 0, height = 0, loopCount = 0
+        var pixelArt = false
         var frames: [CacheFrame] = []
         var rects: [CacheRect] = []
     }
@@ -225,7 +230,9 @@ final class CacheFile {
 
         guard u32(0) == Int(Cache.magic) else { throw MCWError.bad("magic") }
         guard u16(4) == Int(Cache.version) else { throw MCWError.bad("version") }
+        guard u16(6) & ~Cache.flagPixelArt == 0 else { throw MCWError.bad("flags") }
         var r = Parsed()
+        r.pixelArt = u16(6) & Cache.flagPixelArt != 0
         r.width = u32(8)
         r.height = u32(12)
         let n = u32(16)

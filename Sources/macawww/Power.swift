@@ -1,5 +1,4 @@
 import AppKit
-import IOKit.ps
 
 struct PauseReason: OptionSet {
     let rawValue: UInt16
@@ -9,13 +8,12 @@ struct PauseReason: OptionSet {
     static let locked = PauseReason(rawValue: 1 << 3)
     static let sessionInactive = PauseReason(rawValue: 1 << 4)
     static let lowPower = PauseReason(rawValue: 1 << 5)
-    static let battery = PauseReason(rawValue: 1 << 6)
-    static let user = PauseReason(rawValue: 1 << 7)
+    static let user = PauseReason(rawValue: 1 << 6)
 
     static let names: [(PauseReason, String)] = [
         (.occluded, "occluded"), (.displaySleep, "displaySleep"), (.systemSleep, "systemSleep"),
         (.locked, "locked"), (.sessionInactive, "sessionInactive"), (.lowPower, "lowPower"),
-        (.battery, "battery"), (.user, "user"),
+        (.user, "user"),
     ]
 
     var list: [String] { PauseReason.names.filter { contains($0.0) }.map(\.1) }
@@ -27,10 +25,7 @@ final class Power {
     /// Displays with a full-screen window of another app (occlusion fallback, SPEC §9).
     private var covered = Set<CGDirectDisplayID>()
     var onChange: () -> Void = {}
-    private let pauseOnBattery: Bool
     private var tokens: [NSObjectProtocol] = []
-
-    init(pauseOnBattery: Bool) { self.pauseOnBattery = pauseOnBattery }
 
     func start() {
         let ws = NSWorkspace.shared.notificationCenter
@@ -48,7 +43,6 @@ final class Power {
         watch(nc, .NSProcessInfoPowerStateDidChange) { $0.updateLowPower() }
         watch(nc, NSWindow.didChangeOcclusionStateNotification) { $0.onChange() }
         updateLowPower()
-        if pauseOnBattery { startBattery() }
     }
 
     func setUser(_ paused: Bool) { set(.user, paused) }
@@ -110,23 +104,5 @@ final class Power {
             covered = found
             onChange()
         }
-    }
-
-    // MARK: Battery
-
-    private func startBattery() {
-        let ctx = Unmanaged.passUnretained(self).toOpaque()
-        let src = IOPSNotificationCreateRunLoopSource({ ctx in
-            guard let ctx else { return }
-            Unmanaged<Power>.fromOpaque(ctx).takeUnretainedValue().updateBattery()
-        }, ctx)?.takeRetainedValue()
-        if let src { CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes) }
-        updateBattery()
-    }
-
-    private func updateBattery() {
-        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
-              let type = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() else { return }
-        set(.battery, (type as String) == kIOPMBatteryPowerKey)
     }
 }

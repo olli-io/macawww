@@ -4,14 +4,23 @@ import AppKit
 final class Screen {
     let id: CGDirectDisplayID
     let window: NSWindow
+    /// Shows the image or the colour. A sublayer of the root layer of the window.
     let layer: CALayer
+    /// Backing pixels for each point.
+    var scale: CGFloat
     var player: Player?
     var color: UInt32?
+    /// Size in backing pixels.
+    var pixelSize: (w: Int, h: Int) {
+        let size = window.frame.size
+        return (Int((size.width * scale).rounded()), Int((size.height * scale).rounded()))
+    }
 
-    init(id: CGDirectDisplayID, window: NSWindow, layer: CALayer) {
+    init(id: CGDirectDisplayID, window: NSWindow, layer: CALayer, scale: CGFloat) {
         self.id = id
         self.window = window
         self.layer = layer
+        self.scale = scale
     }
 }
 
@@ -20,6 +29,8 @@ final class Screens {
     private(set) var all: [CGDirectDisplayID: Screen] = [:]
     /// Called after each reconcile.
     var onChange: () -> Void = {}
+    /// Called after the image, the colour, the frame or the scale of a screen changed.
+    var onLayout: (Screen) -> Void = { _ in }
     private var pending: DispatchWorkItem?
     private var tokens: [NSObjectProtocol] = []
 
@@ -53,9 +64,14 @@ final class Screens {
             guard let id = Screens.displayID(s) else { continue }
             seen.insert(id)
             if let e = all[id] {
-                if e.window.frame != s.frame { e.window.setFrame(s.frame, display: false) }
+                guard e.window.frame != s.frame || e.scale != s.backingScaleFactor else { continue }
+                e.window.setFrame(s.frame, display: false)
+                e.scale = s.backingScaleFactor
+                layout(e)
             } else {
-                all[id] = make(id, s.frame)
+                let e = make(id, s.frame, s.backingScaleFactor)
+                all[id] = e
+                layout(e)
             }
         }
         for id in Array(all.keys) where !seen.contains(id) {
@@ -74,6 +90,7 @@ final class Screens {
         s.player = player
         s.color = nil
         player.attach(s.layer)
+        layout(s)
     }
 
     func show(_ s: Screen, color: UInt32) {
@@ -81,6 +98,7 @@ final class Screens {
         s.player?.detach(s.layer)
         s.player = nil
         s.color = color
+        layout(s)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         s.layer.contents = nil
@@ -94,7 +112,42 @@ final class Screens {
         all.values.filter { $0.player === p }.map { ($0.window, $0.id) }
     }
 
-    private func make(_ id: CGDirectDisplayID, _ frame: NSRect) -> Screen {
+    /// Integer scale for pixel art (SPEC §5): the smallest k where art × k covers the screen.
+    /// Sizes in pixels. Returns nil when aspect fill is the better choice: the art is larger
+    /// than the screen, or k is more than 1.25 × the aspect-fill scale (too much is cut).
+    static func integerScale(art: (w: Int, h: Int), screen: (w: Int, h: Int)) -> Int? {
+        guard art.w > 0, art.h > 0, art.w <= screen.w, art.h <= screen.h else { return nil }
+        let k = max((screen.w + art.w - 1) / art.w, (screen.h + art.h - 1) / art.h)
+        guard 4 * k * art.w <= 5 * screen.w || 4 * k * art.h <= 5 * screen.h else { return nil }
+        return k
+    }
+
+    /// Scale and position (pixels, origin bottom left) of pixel art on a screen. Centred on whole pixels.
+    static func placement(art: (w: Int, h: Int), screen: (w: Int, h: Int)) -> (k: Int, x: Int, y: Int)? {
+        guard let k = integerScale(art: art, screen: screen) else { return nil }
+        return (k, (screen.w - art.w * k) / 2, (screen.h - art.h * k) / 2)
+    }
+
+    /// Sets the frame of the image layer. Each screen has its own pixel size, thus its own k.
+    private func layout(_ s: Screen) {
+        var frame = CGRect(origin: .zero, size: s.window.frame.size)
+        var gravity = CALayerContentsGravity.resizeAspectFill
+        if let p = s.player, p.pixelArt,
+           let at = Screens.placement(art: (p.width, p.height), screen: s.pixelSize) {
+            // The root layer cuts the part outside the screen.
+            frame = CGRect(x: CGFloat(at.x) / s.scale, y: CGFloat(at.y) / s.scale,
+                           width: CGFloat(p.width * at.k) / s.scale, height: CGFloat(p.height * at.k) / s.scale)
+            gravity = .resize
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        s.layer.frame = frame
+        s.layer.contentsGravity = gravity
+        CATransaction.commit()
+        onLayout(s)
+    }
+
+    private func make(_ id: CGDirectDisplayID, _ frame: NSRect, _ scale: CGFloat) -> Screen {
         let w = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
         w.setFrame(frame, display: false)
         w.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)))
@@ -106,18 +159,23 @@ final class Screens {
         w.isReleasedWhenClosed = false
         w.animationBehavior = .none
 
+        let root = CALayer()
+        root.backgroundColor = CGColor(gray: 0, alpha: 1)
+        root.masksToBounds = true
         let layer = CALayer()
         layer.contentsGravity = .resizeAspectFill
         layer.magnificationFilter = .nearest
         layer.minificationFilter = .linear
         layer.backgroundColor = CGColor(gray: 0, alpha: 1)
-        layer.actions = ["contents": NSNull(), "backgroundColor": NSNull()]
+        layer.actions = ["contents": NSNull(), "backgroundColor": NSNull(), "bounds": NSNull(),
+                         "position": NSNull()]
+        root.addSublayer(layer)
         // Layer-hosting view: set the layer before wantsLayer. AppKit does not draw into it.
         let v = NSView(frame: NSRect(origin: .zero, size: frame.size))
-        v.layer = layer
+        v.layer = root
         v.wantsLayer = true
         w.contentView = v
         w.orderFront(nil)
-        return Screen(id: id, window: w, layer: layer)
+        return Screen(id: id, window: w, layer: layer, scale: scale)
     }
 }

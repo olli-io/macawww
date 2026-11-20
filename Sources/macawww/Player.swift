@@ -75,6 +75,8 @@ final class Player {
     let width: Int
     let height: Int
     let frameCount: Int
+    /// Stored at 1× by the decoder: screens show it at an integer scale (SPEC §5).
+    let pixelArt: Bool
     private let loopCount: Int
     private var cache: CacheFile?
     private(set) var front: IOSurfaceRef
@@ -98,6 +100,7 @@ final class Player {
         height = cache.height
         frameCount = cache.frameCount
         loopCount = cache.loopCount
+        pixelArt = cache.pixelArt
         guard let f = Player.surface(width, height) else { throw MCWError.io("IOSurface create failed") }
         front = f
         if frameCount > 1 {

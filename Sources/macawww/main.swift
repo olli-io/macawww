@@ -51,6 +51,23 @@ case "img":
     guard pos.count == 1 else { usage() }
     let path = URL(fileURLWithPath: pos[0]).standardizedFileURL.path
     exit(Client.send(["img", path, screenArg(o)]))
+case "decode":
+    // Internal: the daemon starts this as a child process (SPEC §6). Not in the usage text.
+    let a = Array(cliRest)
+    guard a.count == 2 else { usage() }
+    Child.main { try Decoder.decode(url: URL(fileURLWithPath: a[0]), to: URL(fileURLWithPath: a[1])) }
+case "still":
+    // Internal: one PNG of frame 0 for the macOS desktop picture (SPEC §16).
+    let a = Array(cliRest)
+    guard a.count == 4, let w = Int(a[2]), let h = Int(a[3]) else { usage() }
+    Child.main {
+        try SystemWallpaper.renderStill(cache: URL(fileURLWithPath: a[0]), to: URL(fileURLWithPath: a[1]),
+                                        width: w, height: h)
+    }
+case "still-color":
+    let a = Array(cliRest)
+    guard a.count == 2, let c = Target.parseColor(a[0]) else { usage() }
+    Child.main { try SystemWallpaper.renderColor(c, to: URL(fileURLWithPath: a[1])) }
 case "clear":
     let (pos, o) = parseArgs(cliRest, options: ["screen", "color"])
     guard pos.isEmpty, let c = Target.parseColor(o["color"] ?? "#000000") else { usage() }

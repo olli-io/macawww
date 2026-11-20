@@ -32,7 +32,7 @@ final class CacheTests: XCTestCase {
     }
 
     func testBadVersion() throws {
-        let u = try mutated(try validFile()) { $0[4] = 2 }
+        let u = try mutated(try validFile()) { $0[4] &+= 1 }
         XCTAssertThrowsError(try CacheFile(url: u))
     }
 

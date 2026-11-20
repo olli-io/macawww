@@ -75,14 +75,27 @@ One window per screen:
 - Level `CGWindowLevelForKey(.desktopWindow)`. Desktop icons stay above.
 - `ignoresMouseEvents = true`, `isOpaque = true`, `hasShadow = false`.
 - `collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]`.
-- Content view is layer-backed. The layer:
-  - `contentsGravity = .resizeAspectFill`
+- Content view is layer-hosting. The root layer is black and has `masksToBounds = true`. It has one image sublayer:
+  - `frame` = the root bounds, `contentsGravity = .resizeAspectFill` (see "Integer scale" for pixel art)
   - `magnificationFilter = .nearest`, `minificationFilter = .linear`
   - `contents` = the `Player`'s front IOSurface.
 
 ### Scaling
 
-Do not scale at load. The buffer stays at the source size. The window server scales during composition, which it does in all cases. Nearest filter keeps pixel art sharp and keeps diffs small. A 4K GIF on a 4K screen has no scale.
+Do not filter or resample at load. The window server scales during composition, which it does in all cases. Nearest filter keeps pixel art sharp and keeps diffs small. A 4K GIF on a 4K screen has no scale.
+
+One exception: an image that is an integer upscale of smaller art (each aligned N×N block has one colour) is stored at 1/N size (§6 step 5). This is a point sample with no loss. The window server shows the same picture, and the buffers are N² times smaller.
+
+### Integer scale
+
+Pixel art (cache flag `pixelArt`, §7) shows at a whole-number scale, so that all art pixels have the same size. Each screen calculates its own scale from its size in backing pixels (`frame` × `backingScaleFactor`):
+
+- k = the smallest whole number where art × k covers the screen: `max(ceil(W / w), ceil(H / h))`.
+- The image layer has `contentsGravity = .resize` and the size art × k pixels. It is centred on whole pixels. The root layer cuts the part outside the screen.
+- Fallback to aspect fill: the art is larger than the screen in one dimension, or k > 1.25 × the aspect-fill scale (more than 20 % more is cut than with aspect fill).
+- Calculate again when the image, the screen frame or the backing scale changes (§10).
+
+Limit: in a scaled display mode, macOS scales the backing buffer to the panel after composition. Then the art pixels are equal in the buffer, but not on the panel.
 
 ## 6. Decode and cache
 
@@ -90,18 +103,21 @@ Input formats: all formats that ImageIO reads. Multi-frame GIF, APNG and WebP an
 
 Max size: 16384 px per side (IOSurface limit). A still image that is larger is scaled down once at decode; a larger animation is an error. Still images use `CGImageSourceCreateThumbnailAtIndex` with `kCGImageSourceCreateThumbnailWithTransform`, so the EXIF orientation applies.
 
-Steps (background queue, one frame in memory at a time, plus the previous frame):
+The daemon does not decode. On a cache miss it starts `macawww decode <src> <dst>` (the same binary, an internal command, see `Child.swift`) as a child process, waits for it on the background queue, then maps the cache file. All decode memory (ImageIO, frame buffers, malloc caches) goes away with the child. The child writes its error text to stderr and exits with status 1; the daemon puts that text in the `err` reply.
+
+Steps (step 1 in the daemon on the background queue, the others in the child; one frame in memory at a time, plus the previous frame, plus one source-size frame when step 5 finds an upscale):
 1. Hash the file bytes (SHA-256, CryptoKit). If a valid cache file exists, skip to §8.
 2. `CGImageSourceCreateWithURL`. Read frame count, loop count, and the delay per frame (`kCGImagePropertyGIFUnclampedDelayTime`, fall back to `DelayTime`).
 3. Clamp: a delay < 20 ms becomes 100 ms (browser behaviour).
 4. For each frame: `CGImageSourceCreateImageAtIndex` gives the composited frame. Draw it into a BGRA premultiplied buffer of the source size.
-5. Compare with the previous frame in 32×32 tiles (`memcmp` per tile row). Mark changed tiles.
-6. Merge changed tiles into at most 8 rects (row runs, then vertical merge, then bounding-box merge of the smallest pairs until ≤ 8).
-7. If the dirty area > 50 % of the frame, store one full-frame rect.
-8. Frame 0 is always a full frame.
-9. Compress each rect with LZ4 (`compression_encode_buffer`, `COMPRESSION_LZ4_RAW`).
-10. Append to the cache file. Release the frame.
-11. Write to a temp file, `fsync`, then `rename` to the final name.
+5. Integer upscale: N = the GCD of all run lengths of equal pixels along the rows and columns of frame 0. If N > 1, store one pixel per N×N block; all later steps use the small frame. Check each later frame against N. If a frame fails, calculate the smaller N (a divisor of the old N) and start the decode again. If N = 1, there is no extra buffer and no extra copy.
+6. Compare with the previous frame in 32×32 tiles (`memcmp` per tile row). Mark changed tiles.
+7. Merge changed tiles into at most 8 rects (row runs, then vertical merge, then bounding-box merge of the smallest pairs until ≤ 8).
+8. If the dirty area > 50 % of the frame, store one full-frame rect.
+9. Frame 0 is always a full frame.
+10. Compress each rect with LZ4 (`compression_encode_buffer`, `COMPRESSION_LZ4_RAW`).
+11. Append to the cache file. Release the frame.
+12. Write to a temp file, `fsync`, then `rename` to the final name.
 
 Identical consecutive frames: merge them into one entry and add the delays.
 
@@ -112,8 +128,8 @@ Path: `~/Library/Caches/macawww/<sha256-hex>.mcw`. Little-endian.
 ```
 Header (32 bytes)
   u32 magic      'MCWW'
-  u16 version    1
-  u16 flags      0
+  u16 version    3
+  u16 flags      bit 0 = pixelArt (step 5 of §6 found N > 1). Other bits: 0.
   u32 width
   u32 height
   u32 frameCount
@@ -131,7 +147,7 @@ Index (at indexOffset), frameCount entries
 
 Read: `mmap` the whole file, `PROT_READ`, `MAP_PRIVATE`. The pages are file-backed and clean, so the kernel can evict them under pressure. Validate magic, version and bounds before use. On a bad file: delete it and decode again.
 
-Eviction: LRU by access time when the cache dir is larger than `max_cache_mb`.
+Eviction: LRU by access time when the cache dir is larger than `max_cache_mb`. It includes the PNG files of §16. Files in use stay.
 
 Bump `version` on any format change.
 
@@ -177,8 +193,9 @@ Pause: set `back` to `kIOSurfacePurgeableVolatile`. The kernel can take its page
 | `locked` | distributed `com.apple.screenIsLocked` / `screenIsUnlocked` | global |
 | `sessionInactive` | `NSWorkspace.sessionDidResignActiveNotification` / `didBecomeActive` | global |
 | `lowPower` | `NSProcessInfoPowerStateDidChange`, `isLowPowerModeEnabled` | global |
-| `battery` | `IOPSNotificationCreateRunLoopSource`; only if `pause_on_battery = true` | global |
 | `user` | `pause` / `resume` commands | global |
+
+The power source (battery or charger) is not a pause reason. On battery, only Low Power Mode pauses the players.
 
 On pause: cancel the timer. Keep the current frame on screen. Make `back` volatile (§8).
 On resume: restore the invariant (§8), then start the timer.
@@ -192,7 +209,7 @@ Signals: `NSApplication.didChangeScreenParametersNotification`, `NSWorkspace.did
 Debounce 250 ms, then reconcile by `CGDirectDisplayID`:
 - New screen: create a window. Use the per-screen state, else the `all` state.
 - Gone screen: close the window. Release the player when it has no layers.
-- Changed frame: `setFrame(screen.frame, display: false)`.
+- Changed frame or backing scale: `setFrame(screen.frame, display: false)`, then set the image layer frame again (§5).
 
 Then restore the invariant (§8) for each player that changed.
 
@@ -202,7 +219,6 @@ Dir: `~/Library/Application Support/macawww/`.
 
 - `state`: one line per target, `<id|all> img <path>` or `<id|all> color <hex>`. Written on each change (temp file + rename). Read at daemon start.
 - `config` (optional, `key = value`):
-  - `pause_on_battery` (bool, default `true`)
   - `max_cache_mb` (int, default `512`)
 
 ## 12. Start at login
@@ -234,15 +250,19 @@ Sources/macawww/
   Daemon.swift        app setup, socket server, state file
   Client.swift        socket client
   Screens.swift       window per screen, reconcile
-  Decoder.swift       ImageIO → diff → cache writer
+  Decoder.swift       ImageIO → frame encoder → cache writer
+  Diff.swift          tile diff, rect merge
+  Upscale.swift       integer upscale detection, point sample
   Cache.swift         file format, mmap reader, eviction
   Player.swift        IOSurface double buffer, timer
   Power.swift         pause signals → pause reasons
+  SystemWallpaper.swift  macOS desktop picture sync, still PNG
+  Child.swift         child process for internal commands
   LaunchAgent.swift   install / uninstall
 Tests/macawwwTests/
 ```
 
-Frameworks: AppKit, QuartzCore, ImageIO, IOSurface, Compression, IOKit, CryptoKit. No third-party dependencies.
+Frameworks: AppKit, QuartzCore, ImageIO, IOSurface, Compression, CryptoKit. No third-party dependencies.
 
 ### Tests
 
@@ -250,13 +270,17 @@ Unit:
 - Diff + LZ4 round trip gives each frame bit-exact (synthetic frames and fixture GIFs).
 - Cache write/read; bad magic, bad version, truncated file are rejected.
 - Delay clamp; identical-frame merge.
+- Integer upscale: factor, block check, point sample, decode restart with a smaller factor.
+- Integer scale per screen: k for exact fit, for cut, and the aspect-fill fallback.
+- Still PNG for the macOS desktop picture: size, scale and cut are equal to the layer.
 - Double-buffer invariant over 3 loops, including 1, 2 and 3 frame animations.
 
 Manual (macOS):
 - Hotplug, resolution change, mirror on/off.
 - Sleep/wake, lock/unlock, fast user switch.
 - Spaces, full-screen app, Mission Control.
-- Battery unplug, Low Power Mode.
+- Battery unplug (no pause), Low Power Mode (pause).
+- macOS desktop picture: follows `img` and `clear`, each Space after a visit, lock screen.
 - Measure with `top -pid`, `footprint`, `sudo powermetrics --samplers tasks`.
 
 ## 15. Open points
@@ -264,3 +288,22 @@ Manual (macOS):
 1. Occlusion of desktop-level windows (§9).
 2. IOSurface lock cost at 4K. Measure. If high, use `kIOSurfaceLockAvoidSync`.
 3. Video input: MP4/HEVC through `AVPlayerLayer` uses the hardware decoder. Possible lower power for high-motion clips. Not in v1.
+
+## 16. macOS desktop picture
+
+The macawww window covers the desktop only while the daemon runs. The daemon also sets the macOS desktop picture of each screen to the same content, so that macOS shows it where the window is not present (before the daemon starts, after `kill`, on the lock screen). Always on. There is no option.
+
+For each screen, after its image, colour, frame or backing scale changed (the `onLayout` callback of `Screens`):
+
+| Content | File for macOS | macOS scaling |
+|---|---|---|
+| Pixel art at an integer scale (§5) | `<cache dir>/<sha256>-<W>x<H>.png`: frame 0 at the screen size in pixels, with the scale and the cut of the layer. No filter. | none necessary (file size = screen size) |
+| Other image | the original file | proportional, clipping allowed (aspect fill) |
+| Colour | `<cache dir>/color-<RRGGBB>.png`, 16×16 | axes independent |
+
+- A missing PNG is made by a child process (`macawww still <mcw> <png> <W> <H>`, `macawww still-color <hex> <png>`), as in §6. The daemon does not load ImageIO.
+- The call is `NSWorkspace.setDesktopImageURL(_:for:options:)`. Skip it when `desktopImageURL(for:)` already gives the same path.
+- macOS shows the first frame only. Animation stays in the macawww window.
+- Spaces: the macOS call changes the active Space only. On `NSWorkspace.activeSpaceDidChangeNotification`, set the picture again for each screen. Thus each Space gets the picture when the user goes to it. No public API sets all Spaces in one operation. Never poll.
+- Lock screen: macOS uses the desktop picture there. There is no separate call.
+- macawww does not store the desktop picture that it replaces. `uninstall` and `kill` leave the last picture.

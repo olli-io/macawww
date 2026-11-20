@@ -18,7 +18,7 @@ Builds only on macOS 14+. On Linux: edit only, do not try to build.
   - No allocation, no logging, no Swift collections growth on the tick path.
   - Only the IOSurface writes touch pixel data per frame.
   - Never poll. Use notifications.
-  - Do not scale pixels on the CPU.
+  - Do not scale pixels on the CPU. One exception: the point sample of an integer upscale at decode (SPEC §6 step 5).
 - All AppKit and CALayer work on the main thread. Decode on a background queue.
 - One file per concern (SPEC §14). Keep each file under 300 lines.
 - All pause/resume signals go through `Power.swift`.

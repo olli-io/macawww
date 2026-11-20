@@ -7,6 +7,7 @@ final class DecoderTests: XCTestCase {
         let f = Fixture.frames(w: 100, h: 70, count: 13)
         let c = try Fixture.encode(f, w: 100, h: 70)
         XCTAssertEqual(c.frameCount, f.count)
+        XCTAssertFalse(c.pixelArt)
         XCTAssertEqual(Fixture.replay(c), f)
     }
 
@@ -79,10 +80,27 @@ final class DecoderTests: XCTestCase {
             let px = Fixture.render(CGImageSourceCreateImageAtIndex(src, i, nil)!, w: 40, h: 30)
             if expected.last != px { expected.append(px) }
         }
-        XCTAssertEqual(c.width, 40)
-        XCTAssertEqual(c.height, 30)
-        XCTAssertEqual(Fixture.replay(c), expected)
+        // The square (8×8) and its positions (steps of 6) are on a 2-pixel grid: stored at 1/2 size.
+        XCTAssertEqual(c.width, 20)
+        XCTAssertEqual(c.height, 15)
+        XCTAssertTrue(c.pixelArt)
+        XCTAssertEqual(Fixture.replay(c), expected.map { Fixture.shrink($0, w: 40, h: 30, n: 2) })
         XCTAssertEqual(c.frames.first?.delayMs, 100)  // 10 ms clamped
         if c.frameCount == 3 { XCTAssertEqual(c.frames.map(\.delayMs), [100, 120, 200]) }
+    }
+
+    func testDecodeRestartSmallerFactor() throws {
+        // Frame 0 has one colour (factor 10). The square in frame 1 needs factor 2.
+        let url = Fixture.gif(w: 40, h: 30, delays: [0.05, 0.05, 0.05], same: [false, false, false], blank0: true)
+        let dst = Fixture.tmpURL()
+        try Decoder.decode(url: url, to: dst)
+        let c = try CacheFile(url: dst)
+        XCTAssertEqual(c.width, 20)
+        XCTAssertEqual(c.height, 15)
+        let src = CGImageSourceCreateWithURL(url as CFURL, nil)!
+        let expected = (0..<3).map {
+            Fixture.shrink(Fixture.render(CGImageSourceCreateImageAtIndex(src, $0, nil)!, w: 40, h: 30), w: 40, h: 30, n: 2)
+        }
+        XCTAssertEqual(Fixture.replay(c), expected)
     }
 }

@@ -23,7 +23,6 @@ enum Target: Equatable {
 }
 
 struct Config {
-    var pauseOnBattery = true
     var maxCacheMB = 512
 
     static func load() -> Config {
@@ -34,7 +33,6 @@ struct Config {
             let kv = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
             guard kv.count == 2, !kv[0].hasPrefix("#") else { continue }
             switch kv[0] {
-            case "pause_on_battery": c.pauseOnBattery = kv[1] == "true"
             case "max_cache_mb": c.maxCacheMB = Int(kv[1]) ?? c.maxCacheMB
             default: logger.warning("config: unknown key \(kv[0], privacy: .public)")
             }
@@ -97,8 +95,9 @@ final class Daemon {
     private static var instance: Daemon?
 
     private let config = Config.load()
-    private lazy var power = Power(pauseOnBattery: config.pauseOnBattery)
+    private lazy var power = Power()
     private let screens = Screens()
+    private lazy var wallpaper = SystemWallpaper(queue: queue)
     private var state: [String: Target] = [:]  // key: "all" or display ID
     private var players: [String: Player] = [:]  // key: path
     private var loading = Set<String>()
@@ -141,6 +140,8 @@ final class Daemon {
         state = loadState()
         power.onChange = { [self] in updatePause() }
         screens.onChange = { [self] in displaysChanged() }
+        screens.onLayout = { [self] in wallpaper.sync($0) }
+        wallpaper.start()
         power.start()
         screens.start()
         logger.info("daemon started")
@@ -222,7 +223,7 @@ final class Daemon {
                     done(e)
                 case .success(let p):
                     if players[path]?.key != p.key { players[path] = p }
-                    Cache.evict(maxBytes: config.maxCacheMB << 20, keep: Set(players.values.map(\.cacheURL)))
+                    Cache.evict(maxBytes: config.maxCacheMB << 20, keep: wallpaper.files.union(players.values.map(\.cacheURL)))
                     done(nil)
                 }
             }

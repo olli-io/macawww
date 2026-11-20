@@ -4,96 +4,6 @@ import CryptoKit
 import Foundation
 import ImageIO
 
-/// Tile diff and rect merge (SPEC §6 steps 5–7).
-enum Diff {
-    static let tile = 32
-    static let maxRects = 8
-
-    /// Marks changed tiles in `grid` (cols × rows). Returns the count of changed tiles.
-    static func tiles(prev: UnsafeRawPointer, cur: UnsafeRawPointer, width: Int, height: Int,
-                      grid: inout [Bool]) -> Int {
-        let cols = (width + tile - 1) / tile, rows = (height + tile - 1) / tile
-        let stride = width * 4
-        var dirty = 0
-        for ty in 0..<rows {
-            let y0 = ty * tile, y1 = min(y0 + tile, height)
-            for tx in 0..<cols {
-                let x0 = tx * tile * 4, n = (min((tx + 1) * tile, width) - tx * tile) * 4
-                var d = false
-                var y = y0
-                while y < y1 {
-                    if memcmp(prev + y * stride + x0, cur + y * stride + x0, n) != 0 { d = true; break }
-                    y += 1
-                }
-                grid[ty * cols + tx] = d
-                if d { dirty += 1 }
-            }
-        }
-        return dirty
-    }
-
-    /// Changed tiles → at most `maxRects` pixel rects.
-    static func merge(grid: [Bool], width: Int, height: Int) -> [Rect] {
-        let cols = (width + tile - 1) / tile, rows = (height + tile - 1) / tile
-        // Row runs, then vertical merge of runs with the same x and width.
-        var rects: [Rect] = []
-        var open: [Int: Int] = [:]
-        for ty in 0..<rows {
-            var next: [Int: Int] = [:]
-            var tx = 0
-            while tx < cols {
-                guard grid[ty * cols + tx] else { tx += 1; continue }
-                let s = tx
-                while tx < cols && grid[ty * cols + tx] { tx += 1 }
-                let key = s << 16 | (tx - s)
-                if let i = open[key] {
-                    rects[i].h += 1
-                    next[key] = i
-                } else {
-                    rects.append(Rect(x: s, y: ty, w: tx - s, h: 1))
-                    next[key] = rects.count - 1
-                }
-            }
-            open = next
-        }
-        // Too many rects for the pair merge: one bounding box per band of tile rows.
-        if rects.count > 64 {
-            rects = []
-            let bh = (rows + 31) / 32
-            var by = 0
-            while by < rows {
-                let y1 = min(by + bh, rows)
-                var box: Rect?
-                for ty in by..<y1 {
-                    for tx in 0..<cols where grid[ty * cols + tx] {
-                        let t = Rect(x: tx, y: ty, w: 1, h: 1)
-                        box = box?.union(t) ?? t
-                    }
-                }
-                if let box { rects.append(box) }
-                by = y1
-            }
-        }
-        // Merge the pair with the smallest bounding box until ≤ maxRects.
-        while rects.count > maxRects {
-            var bi = 0, bj = 1, best = Int.max
-            for i in 0..<rects.count {
-                for j in (i + 1)..<rects.count {
-                    let a = rects[i].union(rects[j]).area
-                    if a < best { best = a; bi = i; bj = j }
-                }
-            }
-            rects[bi] = rects[bi].union(rects[bj])
-            rects.remove(at: bj)
-        }
-        return rects.map {
-            Rect(x: $0.x * tile, y: $0.y * tile,
-                 w: min(($0.x + $0.w) * tile, width) - $0.x * tile,
-                 h: min(($0.y + $0.h) * tile, height) - $0.y * tile)
-        }
-    }
-}
-
 /// Takes full frames one at a time, writes diffs + LZ4 to a cache file.
 /// Holds the current and the previous frame only.
 final class FrameEncoder {
@@ -177,9 +87,9 @@ final class FrameEncoder {
         count += 1
     }
 
-    func finish(loopCount: Int) throws {
+    func finish(loopCount: Int, pixelArt: Bool = false) throws {
         guard count > 0 else { throw MCWError.decode("no frames") }
-        try writer.finish(width: width, height: height, loopCount: loopCount)
+        try writer.finish(width: width, height: height, loopCount: loopCount, pixelArt: pixelArt)
     }
 
     private func store(_ r: Rect) throws {
@@ -206,7 +116,8 @@ enum Decoder {
         (seconds.isNaN || seconds < 0.02) ? 100 : Int((seconds * 1000).rounded())
     }
 
-    /// Returns a valid cache file for `path`. Decodes if needed. Call on a background queue.
+    /// Returns a valid cache file for `path`. Decodes in a child process if needed.
+    /// Call on a background queue.
     static func load(path: String) throws -> (hash: String, cache: CacheFile) {
         let url = URL(fileURLWithPath: path)
         let hash = try autoreleasepool {
@@ -219,7 +130,10 @@ enum Decoder {
             try? FileManager.default.removeItem(at: dst)
         }
         try FileManager.default.createDirectory(at: Cache.dir, withIntermediateDirectories: true)
-        try decode(url: url, to: dst)
+        if var text = Child.run(["decode", path, dst.path]) {
+            if text.hasPrefix("decode: ") { text.removeFirst(8) }  // the child prints an MCWError
+            throw MCWError.decode(text)
+        }
         return (hash, try CacheFile(url: dst))
     }
 
@@ -237,24 +151,58 @@ enum Decoder {
                                       kCGImageSourceCreateThumbnailWithTransform: true,
                                       kCGImageSourceShouldCache: false,
                                       kCGImageSourceThumbnailMaxPixelSize: Cache.maxSide]
-        var first = animated ? CGImageSourceCreateImageAtIndex(src, 0, opts)
-                             : CGImageSourceCreateThumbnailAtIndex(src, 0, thumb as CFDictionary)
-        guard let size = first.map({ ($0.width, $0.height) }) else {
-            throw MCWError.decode("cannot decode \(url.path)")
+        func image(_ i: Int) throws -> CGImage {
+            let img = animated ? CGImageSourceCreateImageAtIndex(src, i, opts)
+                               : CGImageSourceCreateThumbnailAtIndex(src, 0, thumb as CFDictionary)
+            guard let img else { throw MCWError.decode("cannot decode frame \(i) of \(url.path)") }
+            return img
         }
-        let (w, h) = size
-        let enc = try FrameEncoder(width: w, height: h, dst: dst)
+        var first: CGImage? = try image(0)
+        let w = first?.width ?? 0, h = first?.height ?? 0
+        guard (1...Cache.maxSide).contains(w), (1...Cache.maxSide).contains(h) else {
+            throw MCWError.decode("image size \(w)x\(h) not supported")
+        }
         let rect = CGRect(x: 0, y: 0, width: w, height: h)
-        for i in 0..<(animated ? total : 1) {
-            try autoreleasepool {
-                let img = i == 0 ? first : CGImageSourceCreateImageAtIndex(src, i, opts)
-                first = nil
-                guard let img else { throw MCWError.decode("cannot decode frame \(i)") }
-                enc.context.draw(img, in: rect)
-                try enc.commit(delayMs: animated ? delayMs(frameDelay(src, i)) : 0)
-            }
+
+        // Integer upscale (SPEC §6 step 5): draw at the source size into `stage`, store 1 pixel per block.
+        var stage: UnsafeMutableRawPointer? = calloc(w * h * 4, 1)
+        defer { free(stage) }
+        var stageCtx = stage.flatMap { FrameEncoder.context($0, w, h) }
+        guard let probe = stage, let ctx = stageCtx, let img0 = first else {
+            throw MCWError.decode("cannot create bitmap context")
         }
-        try enc.finish(loopCount: animated ? loopCount(src) : 0)
+        ctx.draw(img0, in: rect)
+        var n = Upscale.factor(probe, width: w, height: h)
+
+        while true {
+            if n == 1 {  // no upscale: draw straight into the encoder
+                stageCtx = nil
+                free(stage)
+                stage = nil
+            }
+            let enc = try FrameEncoder(width: w / n, height: h / n, dst: dst)
+            var smaller = 0
+            for i in 0..<(animated ? total : 1) where smaller == 0 {
+                try autoreleasepool {
+                    let img = try first ?? image(i)
+                    first = nil
+                    if let stage, let stageCtx {
+                        stageCtx.draw(img, in: rect)
+                        guard Upscale.holds(stage, width: w, height: h, n: n) else {
+                            // A later frame has smaller blocks: start again with the smaller factor.
+                            smaller = Upscale.factor(stage, width: w, height: h, limit: n)
+                            return
+                        }
+                        Upscale.shrink(stage, width: w, height: h, n: n, to: enc.buffer)
+                    } else {
+                        enc.context.draw(img, in: rect)
+                    }
+                    try enc.commit(delayMs: animated ? delayMs(frameDelay(src, i)) : 0)
+                }
+            }
+            if smaller == 0 { return try enc.finish(loopCount: animated ? loopCount(src) : 0, pixelArt: n > 1) }
+            n = smaller
+        }
     }
 
     private static let delayKeys: [(CFString, CFString, CFString)] = [
