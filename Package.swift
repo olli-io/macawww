@@ -9,7 +9,7 @@ let package = Package(
             name: "macawww",
             path: "Sources/macawww",
             swiftSettings: [.unsafeFlags(["-Osize"], .when(configuration: .release))],
-            linkerSettings: [.unsafeFlags(["-dead_strip"], .when(configuration: .release))]
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-dead_strip"], .when(configuration: .release))]
         ),
         .testTarget(
             name: "macawwwTests",

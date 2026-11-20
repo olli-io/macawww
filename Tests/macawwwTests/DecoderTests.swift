@@ -27,8 +27,9 @@ final class DecoderTests: XCTestCase {
     }
 
     func testFullFrameOverHalf() throws {
-        let f = Fixture.frames(w: 64, h: 64, count: 5)  // frame 4 changes 75 %
-        let c = try Fixture.encode(f, w: 64, h: 64)
+        // 64 tiles: the 3 spots of frame 1 are < 50 %. Frame 4 changes 75 %.
+        let f = Fixture.frames(w: 256, h: 256, count: 5)
+        let c = try Fixture.encode(f, w: 256, h: 256)
         XCTAssertTrue(c.frames[0].full)
         XCTAssertTrue(c.frames[4].full)
         XCTAssertFalse(c.frames[1].full)

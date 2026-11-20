@@ -45,7 +45,7 @@ final class Power {
         watch(ws, NSWorkspace.activeSpaceDidChangeNotification) { $0.spaceChanged() }
         watch(dn, Notification.Name("com.apple.screenIsLocked")) { $0.set(.locked, true) }
         watch(dn, Notification.Name("com.apple.screenIsUnlocked")) { $0.set(.locked, false) }
-        watch(nc, ProcessInfo.powerStateDidChangeNotification) { $0.updateLowPower() }
+        watch(nc, .NSProcessInfoPowerStateDidChange) { $0.updateLowPower() }
         watch(nc, NSWindow.didChangeOcclusionStateNotification) { $0.onChange() }
         updateLowPower()
         if pauseOnBattery { startBattery() }

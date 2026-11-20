@@ -180,7 +180,8 @@ final class Player {
     }
 
     private static func setVolatile(_ s: IOSurfaceRef, _ v: Bool) {
-        _ = IOSurfaceSetPurgeable(s, UInt32(v ? kIOSurfacePurgeableVolatile : kIOSurfacePurgeableNonVolatile), nil)
+        let state: IOSurfacePurgeabilityState = v ? .purgeableVolatile : []
+        _ = IOSurfaceSetPurgeable(s, state.rawValue, nil)
     }
 
     private func schedule(_ ms: Int) {

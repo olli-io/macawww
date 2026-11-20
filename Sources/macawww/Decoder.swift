@@ -137,7 +137,8 @@ final class FrameEncoder {
         prevCtx = a
         curCtx = b
         pack = calloc(n, 1)!
-        outCap = n + n / 255 + 64
+        // compression_encode_buffer (LZ4_RAW) gives 0 if the destination is < 128 bytes.
+        outCap = n + n / 255 + 128
         out = calloc(outCap, 1)!
         scratch = calloc(max(1, compression_encode_scratch_buffer_size(COMPRESSION_LZ4_RAW)), 1)!
         grid = [Bool](repeating: false, count: ((width + 31) / 32) * ((height + 31) / 32))
