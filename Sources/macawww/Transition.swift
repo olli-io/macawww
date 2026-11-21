@@ -51,9 +51,7 @@ final class Transition {
     /// The smallest whole-number scale where the grid covers the screen, and the grid
     /// origin. Sizes in pixels.
     static func placement(screen: (w: Int, h: Int)) -> (k: Int, x: Int, y: Int) {
-        let w = Effect.gridW, h = Effect.gridH
-        let k = max(1, (screen.w + w - 1) / w, (screen.h + h - 1) / h)
-        return (k, (screen.w - w * k) / 2, (screen.h - h * k) / 2)
+        Screens.placement(art: (Effect.gridW, Effect.gridH), screen: screen)
     }
 
     private static func replica(_ l: CALayer) -> CALayer {
@@ -211,7 +209,7 @@ extension Effect {
                 let row = (base + y * stride).assumingMemoryBound(to: UInt32.self)
                 for x in 0..<w {
                     let code = d[y * w + x]
-                    row[x] = code >> 24 == 0xFF ? code : code == Effect.veil ? Effect.veilPixel : 0
+                    row[x] = code >> 24 == 0xFF ? code : 0
                     row[w + x] = code == Effect.new ? 0 : 0xFF00_0000
                 }
             }

@@ -34,7 +34,7 @@ final class SystemWallpaper {
     func sync(_ s: Screen) {
         let px = s.pixelSize
         if let p = s.player {
-            if p.pixelArt, Screens.placement(art: (p.width, p.height), screen: px) != nil {
+            if p.pixelArt {
                 // Pixel art: one PNG of the screen size, with the scale and the cut of the layer.
                 let url = Cache.dir.appendingPathComponent("\(p.key)-\(px.w)x\(px.h).png")
                 want[s.id] = Want(url: url, fill: false,
@@ -92,10 +92,10 @@ final class SystemWallpaper {
     /// Writes frame 0 of a pixel-art cache file as a PNG of the screen size (pixels).
     static func renderStill(cache: URL, to dst: URL, width: Int, height: Int) throws {
         let c = try CacheFile(url: cache)
-        guard (1...Cache.maxSide).contains(width), (1...Cache.maxSide).contains(height),
-              let at = Screens.placement(art: (c.width, c.height), screen: (width, height)) else {
-            throw MCWError.decode("no integer scale for \(width)x\(height)")
+        guard (1...Cache.maxSide).contains(width), (1...Cache.maxSide).contains(height) else {
+            throw MCWError.decode("bad size \(width)x\(height)")
         }
+        let at = Screens.placement(art: (c.width, c.height), screen: (width, height))
         let buf = calloc(c.width * c.height * 4, 1)!, scratch = malloc(Blit.scratchSize)!
         defer { free(buf); free(scratch) }
         Blit.apply(c, frame: 0, base: buf, stride: c.width * 4, scratch: scratch, tmp: nil)

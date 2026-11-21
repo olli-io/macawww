@@ -97,7 +97,7 @@ Pixel art (cache flag `pixelArt`, §7) shows at a whole-number scale, so that al
 
 - k = the smallest whole number where art × k covers the screen: `max(ceil(W / w), ceil(H / h))`.
 - The image layer has `contentsGravity = .resize` and the size art × k pixels. It is centred on whole pixels. The root layer cuts the part outside the screen.
-- Fallback to aspect fill: the art is larger than the screen in one dimension, or k > 1.25 × the aspect-fill scale (more than 20 % more is cut than with aspect fill).
+- k is never less than 1. There is no fallback to aspect fill: the overflow is always cut, as in pixelwp. Thus the screen shows a part of the art of `ceil(W / k)` × `ceil(H / k)` art pixels, and the nearest filter scales it by exactly k.
 - Calculate again when the image, the screen frame or the backing scale changes (§10).
 
 Limit: in a scaled display mode, macOS scales the backing buffer to the panel after composition. Then the art pixels are equal in the buffer, but not on the panel.
@@ -283,7 +283,7 @@ Unit:
 - Cache write/read; bad magic, bad version, truncated file are rejected.
 - Delay clamp; identical-frame merge.
 - Integer upscale: factor, block check, point sample, decode restart with a smaller factor.
-- Integer scale per screen: k for exact fit, for cut, and the aspect-fill fallback.
+- Integer scale per screen: k for exact fit, for cut, and for art larger than the screen.
 - Still PNG for the macOS desktop picture: size, scale and cut are equal to the layer.
 - Double-buffer invariant over 3 loops, including 1, 2 and 3 frame animations.
 - Transitions: gradients, burn order, start and end of each kind, grid pixels, slide timing, grid placement.
@@ -330,7 +330,7 @@ For each screen, after its image, colour, frame or backing scale changed (the `o
 - **Grid:** 540 × 270 cells. Each screen shows it at the smallest whole-number scale that covers the screen (`max(ceil(W / 540), ceil(H / 270))`), centred on whole pixels. The overflow is cut.
 - **Step:** 33 ms. One repeating `DispatchSourceTimer` on the main queue for the transition. It exists only during the transition.
 - **Burn:** a fire starts at a random cell and spreads in the order of a random spanning tree (the simple Prim's algorithm), in approximately 60 steps. A cell burns for 11 steps (`FFFFFF` … `510100`), then shows the new wallpaper. One of 64 cells emits smoke, which rises for 16 steps.
-- **Sweep:** a shimmer of random greys goes from right to left in 40 steps (`inOutQuad`) and leaves the old wallpaper below a grey veil (`404040`, alpha 0.75). Then a shimmer of random colours (`8A008A` … `FFFFFF`) goes from left to right and leaves the new wallpaper. A cell shimmers for 4 steps. pixelwp shows a true grey image here; a veil needs no copy of the old image.
+- **Sweep:** one pass. A shimmer of random colours (`8A008A` … `FFFFFF`) goes from left to right in 40 steps (`inOutQuad`) and leaves the new wallpaper. A cell shimmers for 4 steps. pixelwp has a first pass that leaves the old wallpaper in grey; macawww does not.
 - **Wipe:** the diagonals `x + y = d` start in 50 steps (`inOutQuad`), from the top left. A cell shows the colours `833AB4` … `FCB045` for 4 steps, then the new wallpaper.
 - **Slide:** bands of 6 rows. Band `b` starts at step `b + 1` and moves for 24 steps (`inOutQuad`). It shows the new wallpaper moved to the left, with its right edge at the band edge.
 

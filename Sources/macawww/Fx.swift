@@ -25,10 +25,6 @@ final class Effect {
     // Display codes. A code with the top byte 0xFF is an opaque colour (0xFFRRGGBB).
     static let old: UInt32 = 0
     static let new: UInt32 = 1
-    /// The old wallpaper below a grey veil.
-    static let veil: UInt32 = 2
-    /// Premultiplied BGRA pixel of the veil: grey 0x40 at alpha 0.75.
-    static let veilPixel: UInt32 = 0xC030_3030
 
     // burn
     static let igniteSteps = 60  // approximate steps until all cells burn
@@ -39,7 +35,6 @@ final class Effect {
     // sweep
     static let sweepSteps = 40
     static let shimmerSteps: UInt8 = 4
-    static let greys: [UInt32] = [0xFFA0_A0A0, 0xFF80_8080, 0xFF40_4040, 0xFF20_2020, 0xFF10_1010]
     static let sweepColors = gradient([0x8A008A, 0x4569C5, 0x00D1FF, 0x80E8FF, 0xFFFFFF])
     // wipe
     static let wipeSteps = 50
@@ -68,8 +63,6 @@ final class Effect {
     private var groups = 0
     /// sweep, wipe: count of steps in this phase.
     private var t = 0
-    /// sweep: the second sweep runs.
-    private var second = false
 
     init(kind: FxKind, seed: UInt64) {
         self.kind = kind
@@ -156,7 +149,7 @@ final class Effect {
         switch kind {
         case .burn: return (Effect.fireSteps, Effect.new)
         case .wipe: return (Effect.wipeCellSteps, Effect.new)
-        default: return (Effect.shimmerSteps, second ? Effect.new : Effect.veil)
+        default: return (Effect.shimmerSteps, Effect.new)
         }
     }
 
@@ -173,7 +166,7 @@ final class Effect {
         default:
             // a random colour, which stays for 2 steps
             if i % 2 == 1 { return disp[cell] }
-            return second ? Effect.sweepColors[rng.below(8)] : Effect.greys[rng.below(5)]
+            return Effect.sweepColors[rng.below(8)]
         }
     }
 
@@ -224,7 +217,7 @@ final class Effect {
         let complete: Bool
         switch kind {
         case .burn: complete = head == order.count && idle && smoke.isEmpty
-        case .sweep: complete = second && groups == w && idle
+        case .sweep: complete = groups == w && idle
         case .wipe: complete = groups == w + h - 1 && idle
         default: complete = step >= Effect.bands - 1 + Effect.slideSteps
         }
@@ -276,15 +269,9 @@ final class Effect {
     private func sweep() {
         let w = Effect.gridW
         runActive()
-        if !second && groups == w {
-            // The second sweep starts when the shimmer of the first one has stopped.
-            if active.isEmpty { (second, groups, t) = (true, 0, 0) }
-            return
-        }
         for group in easedGroups(w, steps: Effect.sweepSteps) {
-            // first from right to left, then from left to right
-            let x = second ? group : w - 1 - group
-            for y in 0..<Effect.gridH { start(y * w + x) }
+            // from left to right
+            for y in 0..<Effect.gridH { start(y * w + group) }
         }
     }
 

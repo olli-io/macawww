@@ -13,24 +13,28 @@ final class ScreensTests: XCTestCase {
         XCTAssertEqual(Screens.integerScale(art: (1, 1), screen: (7, 5)), 7)
     }
 
-    func testAspectFillFallback() {
-        // Art larger than the screen.
-        XCTAssertNil(Screens.integerScale(art: (3000, 200), screen: (2560, 1664)))
-        // 1.31 → 2 cuts too much.
-        XCTAssertNil(Screens.integerScale(art: (1470, 956), screen: (1920, 1080)))
-        // 1.6 → 2 is the limit (2 = 1.25 × 1.6).
-        XCTAssertEqual(Screens.integerScale(art: (100, 100), screen: (160, 160)), 2)
-        XCTAssertNil(Screens.integerScale(art: (100, 100), screen: (159, 159)))
+    /// There is no aspect-fill fallback: the scale always covers the screen, the overflow is cut.
+    func testNoFallback() {
+        // 1.31 → 2.
+        XCTAssertEqual(Screens.integerScale(art: (1470, 956), screen: (1920, 1080)), 2)
+        XCTAssertEqual(Screens.integerScale(art: (100, 100), screen: (159, 159)), 2)
+        // Wide art: the height sets the scale.
+        XCTAssertEqual(Screens.integerScale(art: (3000, 200), screen: (2560, 1664)), 9)
+        // Art larger than the screen: scale 1, cut on all sides.
+        let a = Screens.placement(art: (4000, 3000), screen: (1920, 1080))
+        XCTAssertEqual(a.k, 1)
+        XCTAssertEqual(a.x, -1040)
+        XCTAssertEqual(a.y, -960)
     }
 
     func testPlacement() {
         let a = Screens.placement(art: (480, 270), screen: (2940, 1912))
-        XCTAssertEqual(a?.k, 8)
-        XCTAssertEqual(a?.x, -450)
-        XCTAssertEqual(a?.y, -124)
+        XCTAssertEqual(a.k, 8)
+        XCTAssertEqual(a.x, -450)
+        XCTAssertEqual(a.y, -124)
         let b = Screens.placement(art: (320, 208), screen: (2560, 1664))
-        XCTAssertEqual(b?.x, 0)
-        XCTAssertEqual(b?.y, 0)
+        XCTAssertEqual(b.x, 0)
+        XCTAssertEqual(b.y, 0)
     }
 
     /// The PNG for the macOS desktop picture has the same scale and cut as the layer.
@@ -51,7 +55,7 @@ final class ScreensTests: XCTestCase {
         XCTAssertEqual(img.width, sw)
         XCTAssertEqual(img.height, sh)
         let out = Fixture.render(img, w: sw, h: sh)
-        let at = Screens.placement(art: (w, h), screen: (sw, sh))!
+        let at = Screens.placement(art: (w, h), screen: (sw, sh))
         XCTAssertEqual(at.k, 5)
         for y in 0..<sh {
             for x in 0..<sw {

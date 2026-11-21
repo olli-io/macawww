@@ -122,12 +122,12 @@ The first use of an image takes a moment, because macawww decodes it and writes 
 
 ## Transitions
 
-`img` and `clear` show the change with a transition, after the effects of [ttfx](https://github.com/omacom/ttfx). A transition runs on a grid of 540 × 270 cells and takes 2 to 4 seconds.
+`img` and `clear` show the change with a transition, after the effects of [ttfx](https://github.com/omacom/ttfx). A transition runs on a grid of 540 × 270 cells and takes 1.5 to 3 seconds.
 
 | Name | Effect |
 |---|---|
 | `burn` | A fire starts at a random cell and spreads. Some cells emit smoke. This is the default. |
-| `sweep` | A shimmer of greys goes from right to left and leaves a grey veil. Then a shimmer of colours goes from left to right and leaves the new wallpaper. |
+| `sweep` | A shimmer of colours goes from left to right and leaves the new wallpaper. |
 | `slide` | The new wallpaper comes in from the left, in bands of rows. |
 | `wipe` | A diagonal band of colours goes from the top left to the bottom right. |
 | `disabled` | No transition. |

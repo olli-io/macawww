@@ -119,18 +119,15 @@ final class Screens {
     }
 
     /// Integer scale for pixel art (SPEC §5): the smallest k where art × k covers the screen.
-    /// Sizes in pixels. Returns nil when aspect fill is the better choice: the art is larger
-    /// than the screen, or k is more than 1.25 × the aspect-fill scale (too much is cut).
-    static func integerScale(art: (w: Int, h: Int), screen: (w: Int, h: Int)) -> Int? {
-        guard art.w > 0, art.h > 0, art.w <= screen.w, art.h <= screen.h else { return nil }
-        let k = max((screen.w + art.w - 1) / art.w, (screen.h + art.h - 1) / art.h)
-        guard 4 * k * art.w <= 5 * screen.w || 4 * k * art.h <= 5 * screen.h else { return nil }
-        return k
+    /// Sizes in pixels. Never less than 1. There is no aspect-fill fallback: the overflow is cut.
+    static func integerScale(art: (w: Int, h: Int), screen: (w: Int, h: Int)) -> Int {
+        let w = max(1, art.w), h = max(1, art.h)
+        return max(1, (screen.w + w - 1) / w, (screen.h + h - 1) / h)
     }
 
     /// Scale and position (pixels, origin bottom left) of pixel art on a screen. Centred on whole pixels.
-    static func placement(art: (w: Int, h: Int), screen: (w: Int, h: Int)) -> (k: Int, x: Int, y: Int)? {
-        guard let k = integerScale(art: art, screen: screen) else { return nil }
+    static func placement(art: (w: Int, h: Int), screen: (w: Int, h: Int)) -> (k: Int, x: Int, y: Int) {
+        let k = integerScale(art: art, screen: screen)
         return (k, (screen.w - art.w * k) / 2, (screen.h - art.h * k) / 2)
     }
 
@@ -138,8 +135,8 @@ final class Screens {
     private func layout(_ s: Screen) {
         var frame = CGRect(origin: .zero, size: s.window.frame.size)
         var gravity = CALayerContentsGravity.resizeAspectFill
-        if let p = s.player, p.pixelArt,
-           let at = Screens.placement(art: (p.width, p.height), screen: s.pixelSize) {
+        if let p = s.player, p.pixelArt {
+            let at = Screens.placement(art: (p.width, p.height), screen: s.pixelSize)
             // The root layer cuts the part outside the screen.
             frame = CGRect(x: CGFloat(at.x) / s.scale, y: CGFloat(at.y) / s.scale,
                            width: CGFloat(p.width * at.k) / s.scale, height: CGFloat(p.height * at.k) / s.scale)

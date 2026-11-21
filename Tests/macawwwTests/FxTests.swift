@@ -40,30 +40,27 @@ final class FxTests: XCTestCase {
                 mixed = mixed || fx.disp.contains { $0 != Effect.old && $0 != Effect.new }
             }
             XCTAssertTrue(mixed)
-            XCTAssertTrue((50..<200).contains(fx.step), "\(kind): \(fx.step) steps")
+            XCTAssertTrue((40..<200).contains(fx.step), "\(kind): \(fx.step) steps")
             XCTAssertTrue(fx.disp.allSatisfy { $0 == Effect.new }, "\(kind)")
             XCTAssertFalse(fx.advance())
         }
     }
 
-    /// Left half: colours and veil. Right half: alpha 0 only where the cell shows the new wallpaper.
+    /// Left half: colours. Right half: alpha 0 only where the cell shows the new wallpaper.
     func testRender() {
         let w = Effect.gridW, h = Effect.gridH
         for kind in grid {
             let fx = Effect(kind: kind, seed: 5)
             var px = [UInt32](repeating: 0xDEAD_BEEF, count: 2 * w * h)
-            var veil = false
             repeat {
                 px.withUnsafeMutableBytes { fx.render($0.baseAddress!, stride: 2 * w * 4) }
                 for cell in stride(from: 0, to: w * h, by: 7) {
                     let code = fx.disp[cell], i = cell / w * 2 * w + cell % w
-                    let color: UInt32 = code >> 24 == 0xFF ? code : code == Effect.veil ? Effect.veilPixel : 0
+                    let color: UInt32 = code >> 24 == 0xFF ? code : 0
                     XCTAssertEqual(px[i], color)
                     XCTAssertEqual(px[i + w], code == Effect.new ? 0 : 0xFF00_0000)
-                    veil = veil || code == Effect.veil
                 }
             } while fx.advance()
-            XCTAssertEqual(veil, kind == .sweep)
             XCTAssertTrue(px.allSatisfy { $0 == 0 })
         }
     }
