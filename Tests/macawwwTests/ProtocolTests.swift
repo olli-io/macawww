@@ -3,7 +3,7 @@ import XCTest
 
 final class ProtocolTests: XCTestCase {
     func testRequestRoundTrip() {
-        let args = ["img", "/tmp/a b\tc\nd \"e\" ä/😀.gif", "all"]
+        let args = ["img", "/tmp/a b\tc\nd \"e\" ä/😀.gif", "all", "config"]
         let line = encodeJSONLine(args)
         XCTAssertTrue(line.hasSuffix("\n"))
         XCTAssertEqual(line.filter { $0 == "\n" }.count, 1)

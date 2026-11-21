@@ -10,7 +10,7 @@ Goal: the lowest CPU, RAM and power use for an animated wallpaper.
 
 Non-goals (v1):
 - GUI or menu bar item.
-- Playlists, slideshows, transitions.
+- Playlists, slideshows. Transitions other than those of §17.
 - Video input (see §15).
 - App bundle. macawww is one CLI binary.
 
@@ -33,7 +33,8 @@ One Swift binary with two roles:
 
 IPC: Unix domain socket at `$TMPDIR/macawww.sock` (`NSTemporaryDirectory()`, mode 0600). Protocol: JSON Lines. One connection per command: the client sends one line, the daemon sends one line, then closes. JSON escapes all control characters, so paths with spaces, tabs or newlines are safe.
 
-- Request: JSON array of strings, the subcommand and its arguments. `["img","/path/a b.gif","all"]`, `["clear","000000","all"]`, `["query"]`, `["pause"]`, `["resume"]`, `["kill"]`.
+- Request: JSON array of strings, the subcommand and its arguments. `["img","/path/a b.gif","all","config"]`, `["clear","000000","all","wipe"]`, `["query"]`, `["pause"]`, `["resume"]`, `["kill"]`.
+  The last argument of `img` and `clear` is the transition name of §17, or `config`.
 - Reply: JSON object. `{"ok":true}` or `{"ok":false,"error":"<message>"}`.
 - `query` reply: `{"ok":true,"screens":[{"id":1,"width":3840,"height":2160,"file":"/a.gif","state":"paused","reasons":["occluded"]}]}`. A screen has `file` or `color` (`"#RRGGBB"`). `state` is `playing`, `paused`, `static` or `stopped` (loop count done). `reasons` is present only when `paused`.
 
@@ -55,10 +56,10 @@ One `Player` per distinct file. All screens that show the same file share one `P
 | Command | Action |
 |---|---|
 | `macawww daemon` | Start the daemon (foreground). |
-| `macawww img <path> [--screen <id\|all>]` | Set wallpaper. Default `all`. |
-| `macawww img <dir> [--screen <id\|all>]` | Show a list of the images in `<dir>`. Set the selected one. |
-| `macawww <dir> [--screen <id\|all>]` | Short form of `img <dir>`. A command name has priority over a directory with the same name. |
-| `macawww clear [--color <hex>] [--screen ...]` | Solid colour. Default `#000000`. |
+| `macawww img <path> [--screen <id\|all>] [--fx <name>]` | Set wallpaper. Default `all`. `--fx`: see §17. |
+| `macawww img <dir> [--screen <id\|all>] [--fx <name>]` | Show a list of the images in `<dir>`. Set the selected one. |
+| `macawww <dir> [--screen <id\|all>] [--fx <name>]` | Short form of `img <dir>`. A command name has priority over a directory with the same name. |
+| `macawww clear [--color <hex>] [--screen ...] [--fx ...]` | Solid colour. Default `#000000`. |
 | `macawww query` | Print screens, size, file, state (playing/paused + reason). |
 | `macawww pause` / `resume` | Manual pause. |
 | `macawww kill` | Stop the daemon. |
@@ -224,6 +225,9 @@ Dir: `~/Library/Application Support/macawww/`.
 - `state`: one line per target, `<id|all> img <path>` or `<id|all> color <hex>`. Written on each change (temp file + rename). Read at daemon start.
 - `config` (optional, `key = value`):
   - `max_cache_mb` (int, default `512`)
+  - `transition` (`burn`, `sweep`, `slide`, `wipe` or `disabled`, default `burn`; see §17)
+
+The daemon reads `config` one time, at start.
 
 ## 12. Start at login
 
@@ -252,6 +256,7 @@ Package.swift
 Sources/macawww/
   main.swift          CLI parse, dispatch
   Daemon.swift        app setup, socket server, state file
+  Config.swift        config file
   Client.swift        socket client
   Picker.swift        file list for `img <dir>`
   Screens.swift       window per screen, reconcile
@@ -261,6 +266,8 @@ Sources/macawww/
   Cache.swift         file format, mmap reader, eviction
   Player.swift        IOSurface double buffer, timer
   Power.swift         pause signals → pause reasons
+  Fx.swift            transitions: cell grid, burn, sweep, wipe, slide timing
+  Transition.swift    transitions: layers, grid surface, step timer
   SystemWallpaper.swift  macOS desktop picture sync, still PNG
   Child.swift         child process for internal commands
   LaunchAgent.swift   install / uninstall
@@ -279,6 +286,7 @@ Unit:
 - Integer scale per screen: k for exact fit, for cut, and the aspect-fill fallback.
 - Still PNG for the macOS desktop picture: size, scale and cut are equal to the layer.
 - Double-buffer invariant over 3 loops, including 1, 2 and 3 frame animations.
+- Transitions: gradients, burn order, start and end of each kind, grid pixels, slide timing, grid placement.
 
 Manual (macOS):
 - Hotplug, resolution change, mirror on/off.
@@ -286,6 +294,7 @@ Manual (macOS):
 - Spaces, full-screen app, Mission Control.
 - Battery unplug (no pause), Low Power Mode (pause).
 - macOS desktop picture: follows `img` and `clear`, each Space after a visit, lock screen.
+- Transitions: each kind, image ↔ colour, pixel art ↔ other image, two screens, `pause` during a transition.
 - Measure with `top -pid`, `footprint`, `sudo powermetrics --samplers tasks`.
 
 ## 15. Open points
@@ -312,3 +321,30 @@ For each screen, after its image, colour, frame or backing scale changed (the `o
 - Spaces: the macOS call changes the active Space only. On `NSWorkspace.activeSpaceDidChangeNotification`, set the picture again for each screen. Thus each Space gets the picture when the user goes to it. No public API sets all Spaces in one operation. Never poll.
 - Lock screen: macOS uses the desktop picture there. There is no separate call.
 - macawww does not store the desktop picture that it replaces. `uninstall` and `kill` leave the last picture.
+
+## 17. Transitions
+
+`img` and `clear` show the change with a transition. The transitions are the effects of ttfx, as in pixelwp, changed to pixel-art cells. A restore (daemon start, new screen, reload after a cache miss) has no transition.
+
+- **Selection:** `--fx <burn|sweep|slide|wipe|disabled>`. Without `--fx`, the client sends `config` and the daemon uses the `transition` key (§11). The default is `burn`.
+- **Grid:** 540 × 270 cells. Each screen shows it at the smallest whole-number scale that covers the screen (`max(ceil(W / 540), ceil(H / 270))`), centred on whole pixels. The overflow is cut.
+- **Step:** 33 ms. One repeating `DispatchSourceTimer` on the main queue for the transition. It exists only during the transition.
+- **Burn:** a fire starts at a random cell and spreads in the order of a random spanning tree (the simple Prim's algorithm), in approximately 60 steps. A cell burns for 11 steps (`FFFFFF` … `510100`), then shows the new wallpaper. One of 64 cells emits smoke, which rises for 16 steps.
+- **Sweep:** a shimmer of random greys goes from right to left in 40 steps (`inOutQuad`) and leaves the old wallpaper below a grey veil (`404040`, alpha 0.75). Then a shimmer of random colours (`8A008A` … `FFFFFF`) goes from left to right and leaves the new wallpaper. A cell shimmers for 4 steps. pixelwp shows a true grey image here; a veil needs no copy of the old image.
+- **Wipe:** the diagonals `x + y = d` start in 50 steps (`inOutQuad`), from the top left. A cell shows the colours `833AB4` … `FCB045` for 4 steps, then the new wallpaper.
+- **Slide:** bands of 6 rows. Band `b` starts at step `b + 1` and moves for 24 steps (`inOutQuad`). It shows the new wallpaper moved to the left, with its right edge at the band edge.
+
+Composition (the window server does all scaling and mixing; macawww writes no wallpaper pixels):
+
+- `Screens.show` puts the new wallpaper on the image layer at once. Above it, each screen gets a temporary layer with:
+  - a copy of the image layer as it was before the change (the old wallpaper). It is a layer of the old player, so the old animation continues. The transition keeps the old player until its end.
+  - burn, sweep, wipe: the grid layers. One pair of IOSurfaces (`front`, `back`) of 1080 × 270 holds the grid: the left half is the colour of each cell (transparent when the cell shows a wallpaper), the right half is the mask of the old wallpaper (alpha 0 when the cell shows the new one). Two layers show the halves with `contentsRect` and the nearest filter: one is the mask of the old copy, one is above it. All screens share the surfaces.
+  - slide: no grid. One clip layer for each band, with a copy of the new image layer (a layer of the new player). A step sets the clip width and the copy position of the bands that move.
+- On a step, for burn, sweep and wipe: advance the cells, write the full grid into `back` (291 600 pixels), set `contents` of the grid layers, swap. No allocation, no logging.
+- At the end: remove the temporary layers, release the surfaces, the grid (approximately 4 MB in total) and the old player.
+
+Rules:
+
+- One transition at a time. A new `img` or `clear`, and each display change (§10), ends the current transition at once.
+- A transition does not pause. It ends at once when a pause reason (§9) is active for all its screens, and it does not start in that condition. Thus a paused daemon has no wakeups.
+- A screen whose wallpaper did not change has no transition.

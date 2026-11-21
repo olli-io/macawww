@@ -1,0 +1,26 @@
+import Foundation
+
+/// The optional config file (SPEC §11). Read one time, at daemon start.
+struct Config {
+    var maxCacheMB = 512
+    var transition = FxKind.burn
+
+    static func load() -> Config {
+        var c = Config()
+        let url = Daemon.supportDir.appendingPathComponent("config")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return c }
+        for line in text.split(separator: "\n") {
+            let kv = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard kv.count == 2, !kv[0].hasPrefix("#") else { continue }
+            switch kv[0] {
+            case "max_cache_mb": c.maxCacheMB = Int(kv[1]) ?? c.maxCacheMB
+            case "transition":
+                if let k = FxKind(rawValue: kv[1]) { c.transition = k } else {
+                    logger.warning("config: bad transition \(kv[1], privacy: .public)")
+                }
+            default: logger.warning("config: unknown key \(kv[0], privacy: .public)")
+            }
+        }
+        return c
+    }
+}

@@ -3,13 +3,18 @@ import Foundation
 let usageText = """
 usage: macawww <command>
   daemon                                       start the daemon (foreground)
-  img <path|dir> [--screen <id|all>]           set wallpaper; a directory shows a file list
-  <dir> [--screen <id|all>]                    short form of img <dir>
-  clear [--color <hex>] [--screen <id|all>]    solid colour (default #000000)
+  img <path|dir> [--screen <id|all>] [--fx <name>]
+                                               set wallpaper; a directory shows a file list
+  <dir> [--screen <id|all>] [--fx <name>]      short form of img <dir>
+  clear [--color <hex>] [--screen <id|all>] [--fx <name>]
+                                               solid colour (default #000000)
   query                                        show screens and state
   pause | resume                               manual pause
   kill                                         stop the daemon
   install | uninstall                          start at login
+
+--fx is the transition: \(FxKind.names). The default is the
+`transition` key in the config file, or else burn.
 """
 
 func usage() -> Never {
@@ -39,6 +44,16 @@ func screenArg(_ o: [String: String]) -> String {
     return s
 }
 
+/// The name of the transition. `config`: the daemon uses its config file.
+func fxArg(_ o: [String: String]) -> String {
+    guard let name = o["fx"] else { return "config" }
+    guard FxKind(rawValue: name) != nil else {
+        eprint("bad transition \(name): use \(FxKind.names)")
+        exit(2)
+    }
+    return name
+}
+
 func isDirectory(_ path: String) -> Bool {
     var d: ObjCBool = false
     return FileManager.default.fileExists(atPath: path, isDirectory: &d) && d.boolValue
@@ -46,9 +61,9 @@ func isDirectory(_ path: String) -> Bool {
 
 /// `img <path|dir>`. For a directory, the user selects a file from a list (SPEC §4).
 func imgCommand(_ args: ArraySlice<String>) -> Never {
-    let (pos, o) = parseArgs(args, options: ["screen"])
+    let (pos, o) = parseArgs(args, options: ["screen", "fx"])
     guard pos.count == 1 else { usage() }
-    let screen = screenArg(o)
+    let screen = screenArg(o), fx = fxArg(o)
     var url = URL(fileURLWithPath: pos[0]).standardizedFileURL
     if isDirectory(url.path) {
         guard Client.isRunning() else {
@@ -58,7 +73,7 @@ func imgCommand(_ args: ArraySlice<String>) -> Never {
         guard let file = Picker.run(dir: url) else { exit(1) }
         url = file
     }
-    exit(Client.send(["img", url.path, screen]))
+    exit(Client.send(["img", url.path, screen, fx]))
 }
 
 let cliArgs = CommandLine.arguments.dropFirst()
@@ -89,9 +104,9 @@ case "still-color":
     guard a.count == 2, let c = Target.parseColor(a[0]) else { usage() }
     Child.main { try SystemWallpaper.renderColor(c, to: URL(fileURLWithPath: a[1])) }
 case "clear":
-    let (pos, o) = parseArgs(cliRest, options: ["screen", "color"])
+    let (pos, o) = parseArgs(cliRest, options: ["screen", "color", "fx"])
     guard pos.isEmpty, let c = Target.parseColor(o["color"] ?? "#000000") else { usage() }
-    exit(Client.send(["clear", String(format: "%06X", c), screenArg(o)]))
+    exit(Client.send(["clear", String(format: "%06X", c), screenArg(o), fxArg(o)]))
 case "query", "pause", "resume", "kill":
     guard cliRest.isEmpty else { usage() }
     exit(Client.send([cliCommand]))

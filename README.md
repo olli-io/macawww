@@ -93,9 +93,9 @@ To try macawww without the launch agent, run `macawww daemon` in a terminal. It 
 | Command | Function |
 |---|---|
 | `macawww daemon` | Start the daemon in the foreground. |
-| `macawww img <path> [--screen <id\|all>]` | Set an image as wallpaper. The default screen is `all`. |
+| `macawww img <path> [--screen <id\|all>] [--fx <name>]` | Set an image as wallpaper. The default screen is `all`. `--fx`: see [Transitions](#transitions). |
 | `macawww <dir>` or `macawww img <dir>` | Show a list of the `.gif`, `.png` and `.jpg` files in the directory. Select one with the arrow keys and Enter. `q` cancels. |
-| `macawww clear [--color <hex>] [--screen <id\|all>]` | Set a solid colour. The default colour is `#000000`. |
+| `macawww clear [--color <hex>] [--screen <id\|all>] [--fx <name>]` | Set a solid colour. The default colour is `#000000`. |
 | `macawww query` | Show each screen with its size, wallpaper and state. |
 | `macawww pause` | Stop all animations. |
 | `macawww resume` | Start the animations again. |
@@ -119,6 +119,24 @@ All commands except `daemon`, `install` and `uninstall` need a daemon that runs.
 macawww reads all image formats that macOS reads (PNG, JPEG, HEIC, GIF, WebP and others). GIF, APNG and WebP files with more than one frame are animated. All other files show as one frame.
 
 The first use of an image takes a moment, because macawww decodes it and writes a cache file. After that, a change to the same image is immediate. When a decode fails, the old wallpaper stays.
+
+## Transitions
+
+`img` and `clear` show the change with a transition, after the effects of [ttfx](https://github.com/omacom/ttfx). A transition runs on a grid of 540 × 270 cells and takes 2 to 4 seconds.
+
+| Name | Effect |
+|---|---|
+| `burn` | A fire starts at a random cell and spreads. Some cells emit smoke. This is the default. |
+| `sweep` | A shimmer of greys goes from right to left and leaves a grey veil. Then a shimmer of colours goes from left to right and leaves the new wallpaper. |
+| `slide` | The new wallpaper comes in from the left, in bands of rows. |
+| `wipe` | A diagonal band of colours goes from the top left to the bottom right. |
+| `disabled` | No transition. |
+
+```sh
+macawww img forest.gif --fx wipe      # for this change only
+```
+
+The `transition` key of the config file sets the default. `--fx` has priority. Animations play during a transition. There is no transition while the wallpaper is paused or not visible.
 
 ## More than one screen
 
@@ -200,6 +218,7 @@ The `config` file has one `key = value` pair on each line. Restart the daemon af
 | Key | Default | Function |
 |---|---|---|
 | `max_cache_mb` | `512` | Maximum size of the cache directory in MB. macawww deletes the files that were used least recently. |
+| `transition` | `burn` | The transition of `img` and `clear`: `burn`, `sweep`, `slide`, `wipe` or `disabled`. |
 
 ## Problems
 

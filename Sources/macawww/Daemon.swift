@@ -22,25 +22,6 @@ enum Target: Equatable {
     }
 }
 
-struct Config {
-    var maxCacheMB = 512
-
-    static func load() -> Config {
-        var c = Config()
-        let url = Daemon.supportDir.appendingPathComponent("config")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return c }
-        for line in text.split(separator: "\n") {
-            let kv = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-            guard kv.count == 2, !kv[0].hasPrefix("#") else { continue }
-            switch kv[0] {
-            case "max_cache_mb": c.maxCacheMB = Int(kv[1]) ?? c.maxCacheMB
-            default: logger.warning("config: unknown key \(kv[0], privacy: .public)")
-            }
-        }
-        return c
-    }
-}
-
 /// Unix socket server on the main queue. One request line, one reply line per connection.
 final class Server {
     private let fd: Int32
@@ -100,6 +81,7 @@ final class Daemon {
     private lazy var wallpaper = SystemWallpaper(queue: queue)
     private var state: [String: Target] = [:]  // key: "all" or display ID
     private var players: [String: Player] = [:]  // key: path
+    private var transition: Transition?
     private var loading = Set<String>()
     private var server: Server?
     private var signals: [DispatchSourceSignal] = []
@@ -156,19 +138,21 @@ final class Daemon {
 
     private func handle(_ a: [String], _ reply: @escaping (Reply) -> Void) {
         switch (a[0], a.count) {
-        case ("img", 3):
-            guard let key = Daemon.targetKey(a[2]) else { return reply(.err("bad screen")) }
+        case ("img", 4):
+            guard let key = Daemon.targetKey(a[2]), let fx = fxKind(a[3]) else {
+                return reply(.err("bad argument"))
+            }
             let path = a[1]
             load(path) { [self] err in
                 if let err { return reply(.err(Daemon.message(err))) }
-                set(key, .img(path))
+                set(key, .img(path), fx)
                 reply(.ok())
             }
-        case ("clear", 3):
-            guard let key = Daemon.targetKey(a[2]), let c = Target.parseColor(a[1]) else {
+        case ("clear", 4):
+            guard let key = Daemon.targetKey(a[2]), let c = Target.parseColor(a[1]), let fx = fxKind(a[3]) else {
                 return reply(.err("bad argument"))
             }
-            set(key, .color(c))
+            set(key, .color(c), fx)
             reply(.ok())
         case ("query", 1): reply(.ok(["screens": query()]))
         case ("pause", 1): power.setUser(true); reply(.ok())
@@ -184,10 +168,15 @@ final class Daemon {
         (e as? MCWError)?.description ?? e.localizedDescription
     }
 
-    private func set(_ key: String, _ t: Target) {
+    /// The transition of a request. `config` is the `transition` key of the config file.
+    private func fxKind(_ name: String) -> FxKind? {
+        name == "config" ? config.transition : FxKind(rawValue: name)
+    }
+
+    private func set(_ key: String, _ t: Target, _ fx: FxKind) {
         if key == "all" { state = ["all": t] } else { state[key] = t }
         saveState()
-        apply()
+        apply(fx: fx)
     }
 
     /// One object per screen: id, width, height, file or color, state, reasons.
@@ -243,16 +232,23 @@ final class Daemon {
     }
 
     /// Show the target of each screen. Release players without layers.
-    private func apply() {
+    /// `fx`: show the change with this transition (SPEC §17). A transition that runs ends first.
+    private func apply(fx: FxKind = .disabled) {
+        transition?.end()
+        let t = Transition(fx)
         for s in screens.all.values {
+            t?.before(s)
+            var changed = false
             switch state[String(s.id)] ?? state["all"] ?? .color(0) {
-            case .color(let c): screens.show(s, color: c)
+            case .color(let c): changed = screens.show(s, color: c)
             case .img(let path):
-                if let p = players[path] { screens.show(s, player: p) } else { ensureLoaded(path) }
+                if let p = players[path] { changed = screens.show(s, player: p) } else { ensureLoaded(path) }
             }
+            t?.after(s, changed: changed)
         }
         let used = Set(screens.all.values.compactMap { $0.player.map(ObjectIdentifier.init) })
         players = players.filter { used.contains(ObjectIdentifier($0.value)) }
+        if let t, t.start(onEnd: { [self] in transition = nil }) { transition = t }
         updatePause()
     }
 
@@ -262,6 +258,8 @@ final class Daemon {
     }
 
     private func updatePause() {
+        // A transition does not pause: it ends when no screen of it can show it.
+        if let t = transition, !power.reasons(windows: t.windows).isEmpty { t.end() }
         var seen = Set<ObjectIdentifier>()
         for s in screens.all.values {
             guard let p = s.player, seen.insert(ObjectIdentifier(p)).inserted else { continue }

@@ -84,17 +84,22 @@ final class Screens {
         onChange()
     }
 
-    func show(_ s: Screen, player: Player) {
-        guard s.player !== player else { return }
+    /// Returns false when the screen already shows this player.
+    @discardableResult
+    func show(_ s: Screen, player: Player) -> Bool {
+        guard s.player !== player else { return false }
         s.player?.detach(s.layer)
         s.player = player
         s.color = nil
         player.attach(s.layer)
         layout(s)
+        return true
     }
 
-    func show(_ s: Screen, color: UInt32) {
-        guard s.player != nil || s.color != color else { return }
+    /// Returns false when the screen already shows this colour.
+    @discardableResult
+    func show(_ s: Screen, color: UInt32) -> Bool {
+        guard s.player != nil || s.color != color else { return false }
         s.player?.detach(s.layer)
         s.player = nil
         s.color = color
@@ -106,6 +111,7 @@ final class Screens {
                                           green: CGFloat(color >> 8 & 0xFF) / 255,
                                           blue: CGFloat(color & 0xFF) / 255, alpha: 1)
         CATransaction.commit()
+        return true
     }
 
     func windows(of p: Player) -> [(window: NSWindow, display: CGDirectDisplayID)] {
