@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import IOSurface
-@testable import macawww
+@testable import macpixel
 
 /// Deterministic PRNG.
 final class LCG {

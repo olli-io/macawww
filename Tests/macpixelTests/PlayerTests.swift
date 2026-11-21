@@ -1,5 +1,5 @@
 import XCTest
-@testable import macawww
+@testable import macpixel
 
 final class PlayerTests: XCTestCase {
     /// Steps 3 loops and checks `front` after each tick (SPEC §8 invariant).

@@ -1,6 +1,6 @@
-# macawww specification
+# macpixel specification
 
-macawww is a wallpaper manager for macOS. It shows static images and animated GIFs on the desktop. It uses the minimum CPU, memory and power.
+macpixel is a purist pixel art wallpaper engine for macOS. It shows static images and animated GIFs on the desktop. It uses the minimum CPU, memory and power.
 
 This file is the source of truth for the design.
 
@@ -12,26 +12,26 @@ Non-goals (v1):
 - GUI or menu bar item.
 - Playlists, slideshows. Transitions other than those of §17.
 - Video input (see §15).
-- App bundle. macawww is one CLI binary.
+- App bundle. macpixel is one CLI binary.
 
 ## 2. Targets
 
 | Item | Target |
 |---|---|
-| OS | macOS 14+. Apple Silicon first. Intel must work. |
+| OS | macOS 14+. Apple silicon only. |
 | Static image, idle | 0 % CPU, < 25 MB RSS |
 | 4K GIF, small diffs | < 1 % CPU on M1, < 40 MB RSS |
-| Paused | 0 wakeups from macawww |
+| Paused | 0 wakeups from macpixel |
 | Binary size | < 1 MB (release, stripped) |
 
 ## 3. Architecture
 
 One Swift binary with two roles:
 
-- **Daemon** (`macawww daemon`): owns the windows, the cache, the players and the pause logic. Runs `NSApplication` with activation policy `.accessory` (no Dock icon, no menu bar).
+- **Daemon** (`macpixel daemon`): owns the windows, the cache, the players and the pause logic. Runs `NSApplication` with activation policy `.accessory` (no Dock icon, no menu bar).
 - **Client** (all other subcommands): sends one command to the daemon and prints the reply.
 
-IPC: Unix domain socket at `$TMPDIR/macawww.sock` (`NSTemporaryDirectory()`, mode 0600). Protocol: JSON Lines. One connection per command: the client sends one line, the daemon sends one line, then closes. JSON escapes all control characters, so paths with spaces, tabs or newlines are safe.
+IPC: Unix domain socket at `$TMPDIR/macpixel.sock` (`NSTemporaryDirectory()`, mode 0600). Protocol: JSON Lines. One connection per command: the client sends one line, the daemon sends one line, then closes. JSON escapes all control characters, so paths with spaces, tabs or newlines are safe.
 
 - Request: JSON array of strings, the subcommand and its arguments. `["img","/path/a b.gif","all","config"]`, `["clear","000000","all","wipe"]`, `["query"]`, `["pause"]`, `["resume"]`, `["kill"]`.
   The last argument of `img` and `clear` is the transition name of §17, or `config`.
@@ -55,15 +55,16 @@ One `Player` per distinct file. All screens that show the same file share one `P
 
 | Command | Action |
 |---|---|
-| `macawww daemon` | Start the daemon (foreground). |
-| `macawww img <path> [--screen <id\|all>] [--fx <name>]` | Set wallpaper. Default `all`. `--fx`: see §17. |
-| `macawww img <dir> [--screen <id\|all>] [--fx <name>]` | Show a list of the images in `<dir>`. Set the selected one. |
-| `macawww <dir> [--screen <id\|all>] [--fx <name>]` | Short form of `img <dir>`. A command name has priority over a directory with the same name. |
-| `macawww clear [--color <hex>] [--screen ...] [--fx ...]` | Solid colour. Default `#000000`. |
-| `macawww query` | Print screens, size, file, state (playing/paused + reason). |
-| `macawww pause` / `resume` | Manual pause. |
-| `macawww kill` | Stop the daemon. |
-| `macawww install` / `uninstall` | Start at login (see §12). |
+| `macpixel daemon` | Start the daemon (foreground). |
+| `macpixel img <path> [--screen <id\|all>] [--fx <name>]` | Set wallpaper. Default `all`. `--fx`: see §17. |
+| `macpixel img <dir> [--screen <id\|all>] [--fx <name>]` | Show a list of the images in `<dir>`. Set the selected one. |
+| `macpixel <dir> [--screen <id\|all>] [--fx <name>]` | Short form of `img <dir>`. A command name has priority over a directory with the same name. |
+| `macpixel clear [--color <hex>] [--screen ...] [--fx ...]` | Solid colour. Default `#000000`. |
+| `macpixel check [<dir>]` | One line for each image of the directory that is not pixel art (N = 1, §6 step 5) or that fails to decode: `<path>: <reason>`. Default: the current directory. Not recursive. A file path checks that file only. The files are those of the file list below. The client does this (`Check.swift`), without the daemon and without a cache file. Exit code 1 when a line is printed. |
+| `macpixel query` | Print screens, size, file, state (playing/paused + reason). |
+| `macpixel pause` / `resume` | Manual pause. |
+| `macpixel kill` | Stop the daemon. |
+| `macpixel install` / `uninstall` | Start at login (see §12). |
 
 `<id>` is the `CGDirectDisplayID`, as `query` shows it.
 
@@ -71,7 +72,7 @@ Exit codes: 0 = ok, 1 = error or cancel, 2 = usage error, 3 = daemon not running
 
 File list (`Picker.swift`): the files in `<dir>` with the extension `.gif`, `.png`, `.jpg` or `.jpeg` (case ignored), in Finder name order. Hidden files and subdirectories are not shown. Keys: up/down or `k`/`j` move, Enter sets the wallpaper, `q`, Esc or Ctrl-C cancel (exit 1). Keys come from stdin and the list goes to stderr, so both must be a terminal. The list scrolls when it is longer than the terminal. The client checks for the daemon before it shows the list.
 
-`--screen all` replaces all per-screen states. `macawww daemon` when a daemon already runs: message, exit 0 (so launchd does not restart it).
+`--screen all` replaces all per-screen states. `macpixel daemon` when a daemon already runs: message, exit 0 (so launchd does not restart it).
 
 ## 5. Wallpaper window
 
@@ -108,7 +109,7 @@ Input formats: all formats that ImageIO reads. Multi-frame GIF, APNG and WebP an
 
 Max size: 16384 px per side (IOSurface limit). A still image that is larger is scaled down once at decode; a larger animation is an error. Still images use `CGImageSourceCreateThumbnailAtIndex` with `kCGImageSourceCreateThumbnailWithTransform`, so the EXIF orientation applies.
 
-The daemon does not decode. On a cache miss it starts `macawww decode <src> <dst>` (the same binary, an internal command, see `Child.swift`) as a child process, waits for it on the background queue, then maps the cache file. All decode memory (ImageIO, frame buffers, malloc caches) goes away with the child. The child writes its error text to stderr and exits with status 1; the daemon puts that text in the `err` reply.
+The daemon does not decode. On a cache miss it starts `macpixel decode <src> <dst>` (the same binary, an internal command, see `Child.swift`) as a child process, waits for it on the background queue, then maps the cache file. All decode memory (ImageIO, frame buffers, malloc caches) goes away with the child. The child writes its error text to stderr and exits with status 1; the daemon puts that text in the `err` reply.
 
 Steps (step 1 in the daemon on the background queue, the others in the child; one frame in memory at a time, plus the previous frame, plus one source-size frame when step 5 finds an upscale):
 1. Hash the file bytes (SHA-256, CryptoKit). If a valid cache file exists, skip to §8.
@@ -128,7 +129,7 @@ Identical consecutive frames: merge them into one entry and add the delays.
 
 ## 7. Cache file format (`.mcw`)
 
-Path: `~/Library/Caches/macawww/<sha256-hex>.mcw`. Little-endian.
+Path: `~/Library/Caches/macpixel/<sha256-hex>.mcw`. Little-endian.
 
 ```
 Header (32 bytes)
@@ -220,7 +221,7 @@ Then restore the invariant (§8) for each player that changed.
 
 ## 11. State and config
 
-Dir: `~/Library/Application Support/macawww/`.
+Dir: `~/Library/Application Support/macpixel/`.
 
 - `state`: one line per target, `<id|all> img <path>` or `<id|all> color <hex>`. Written on each change (temp file + rename). Read at daemon start.
 - `config` (optional, `key = value`):
@@ -232,28 +233,28 @@ The daemon reads `config` one time, at start.
 ## 12. Start at login
 
 `install`:
-1. Write `~/Library/LaunchAgents/io.macawww.daemon.plist`:
-   - `Label` = `io.macawww.daemon`
+1. Write `~/Library/LaunchAgents/io.macpixel.daemon.plist`:
+   - `Label` = `io.macpixel.daemon`
    - `ProgramArguments` = absolute binary path, `daemon`
    - `RunAtLoad` = true
    - `KeepAlive` = `{ SuccessfulExit = false }` (restart on crash only)
    - `ProcessType` = `Interactive`
-   - `StandardErrorPath` = `~/Library/Logs/macawww.log`
+   - `StandardErrorPath` = `~/Library/Logs/macpixel.log`
 2. `launchctl bootstrap gui/$UID <plist>`.
 
-`uninstall`: `launchctl bootout gui/$UID/io.macawww.daemon`, then delete the plist.
+`uninstall`: `launchctl bootout gui/$UID/io.macpixel.daemon`, then delete the plist.
 
 ## 13. Errors and logs
 
 - Client: one-line message on stderr, exit code per §4.
-- Daemon: `os_log`, subsystem `io.macawww`. No log on the tick path.
+- Daemon: `os_log`, subsystem `io.macpixel`. No log on the tick path.
 - Decode error: keep the old wallpaper, reply `err`.
 
 ## 14. Source layout
 
 ```
 Package.swift
-Sources/macawww/
+Sources/macpixel/
   main.swift          CLI parse, dispatch
   Daemon.swift        app setup, socket server, state file
   Config.swift        config file
@@ -263,6 +264,7 @@ Sources/macawww/
   Decoder.swift       ImageIO → frame encoder → cache writer
   Diff.swift          tile diff, rect merge
   Upscale.swift       integer upscale detection, point sample
+  Check.swift         `check`: list the images that are not pixel art
   Cache.swift         file format, mmap reader, eviction
   Player.swift        IOSurface double buffer, timer
   Power.swift         pause signals → pause reasons
@@ -271,7 +273,7 @@ Sources/macawww/
   SystemWallpaper.swift  macOS desktop picture sync, still PNG
   Child.swift         child process for internal commands
   LaunchAgent.swift   install / uninstall
-Tests/macawwwTests/
+Tests/macpixelTests/
 ```
 
 Frameworks: AppKit, QuartzCore, ImageIO, IOSurface, Compression, CryptoKit. No third-party dependencies.
@@ -283,6 +285,7 @@ Unit:
 - Cache write/read; bad magic, bad version, truncated file are rejected.
 - Delay clamp; identical-frame merge.
 - Integer upscale: factor, block check, point sample, decode restart with a smaller factor.
+- `check`: factor of a PNG, factor over all frames, list of a directory, exit code.
 - Integer scale per screen: k for exact fit, for cut, and for art larger than the screen.
 - Still PNG for the macOS desktop picture: size, scale and cut are equal to the layer.
 - Double-buffer invariant over 3 loops, including 1, 2 and 3 frame animations.
@@ -305,7 +308,7 @@ Manual (macOS):
 
 ## 16. macOS desktop picture
 
-The macawww window covers the desktop only while the daemon runs. The daemon also sets the macOS desktop picture of each screen to the same content, so that macOS shows it where the window is not present (before the daemon starts, after `kill`, on the lock screen). Always on. There is no option.
+The macpixel window covers the desktop only while the daemon runs. The daemon also sets the macOS desktop picture of each screen to the same content, so that macOS shows it where the window is not present (before the daemon starts, after `kill`, on the lock screen). Always on. There is no option.
 
 For each screen, after its image, colour, frame or backing scale changed (the `onLayout` callback of `Screens`):
 
@@ -315,12 +318,12 @@ For each screen, after its image, colour, frame or backing scale changed (the `o
 | Other image | the original file | proportional, clipping allowed (aspect fill) |
 | Colour | `<cache dir>/color-<RRGGBB>.png`, 16×16 | axes independent |
 
-- A missing PNG is made by a child process (`macawww still <mcw> <png> <W> <H>`, `macawww still-color <hex> <png>`), as in §6. The daemon does not load ImageIO.
+- A missing PNG is made by a child process (`macpixel still <mcw> <png> <W> <H>`, `macpixel still-color <hex> <png>`), as in §6. The daemon does not load ImageIO.
 - The call is `NSWorkspace.setDesktopImageURL(_:for:options:)`. Skip it when `desktopImageURL(for:)` already gives the same path.
-- macOS shows the first frame only. Animation stays in the macawww window.
+- macOS shows the first frame only. Animation stays in the macpixel window.
 - Spaces: the macOS call changes the active Space only. On `NSWorkspace.activeSpaceDidChangeNotification`, set the picture again for each screen. Thus each Space gets the picture when the user goes to it. No public API sets all Spaces in one operation. Never poll.
 - Lock screen: macOS uses the desktop picture there. There is no separate call.
-- macawww does not store the desktop picture that it replaces. `uninstall` and `kill` leave the last picture.
+- macpixel does not store the desktop picture that it replaces. `uninstall` and `kill` leave the last picture.
 
 ## 17. Transitions
 
@@ -330,11 +333,11 @@ For each screen, after its image, colour, frame or backing scale changed (the `o
 - **Grid:** 540 × 270 cells. Each screen shows it at the smallest whole-number scale that covers the screen (`max(ceil(W / 540), ceil(H / 270))`), centred on whole pixels. The overflow is cut.
 - **Step:** 33 ms. One repeating `DispatchSourceTimer` on the main queue for the transition. It exists only during the transition.
 - **Burn:** a fire starts at a random cell and spreads in the order of a random spanning tree (the simple Prim's algorithm), in approximately 60 steps. A cell burns for 11 steps (`FFFFFF` … `510100`), then shows the new wallpaper. One of 64 cells emits smoke, which rises for 16 steps.
-- **Sweep:** one pass. A shimmer of random colours (`8A008A` … `FFFFFF`) goes from left to right in 40 steps (`inOutQuad`) and leaves the new wallpaper. A cell shimmers for 4 steps. pixelwp has a first pass that leaves the old wallpaper in grey; macawww does not.
+- **Sweep:** one pass. A shimmer of random colours (`8A008A` … `FFFFFF`) goes from left to right in 40 steps (`inOutQuad`) and leaves the new wallpaper. A cell shimmers for 4 steps. pixelwp has a first pass that leaves the old wallpaper in grey; macpixel does not.
 - **Wipe:** the diagonals `x + y = d` start in 50 steps (`inOutQuad`), from the top left. A cell shows the colours `833AB4` … `FCB045` for 4 steps, then the new wallpaper.
 - **Slide:** bands of 6 rows. Band `b` starts at step `b + 1` and moves for 24 steps (`inOutQuad`). It shows the new wallpaper moved to the left, with its right edge at the band edge.
 
-Composition (the window server does all scaling and mixing; macawww writes no wallpaper pixels):
+Composition (the window server does all scaling and mixing; macpixel writes no wallpaper pixels):
 
 - `Screens.show` puts the new wallpaper on the image layer at once. Above it, each screen gets a temporary layer with:
   - a copy of the image layer as it was before the change (the old wallpaper). It is a layer of the old player, so the old animation continues. The transition keeps the old player until its end.

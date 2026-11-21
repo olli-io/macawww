@@ -1,5 +1,5 @@
 import XCTest
-@testable import macawww
+@testable import macpixel
 
 final class ProtocolTests: XCTestCase {
     func testRequestRoundTrip() {

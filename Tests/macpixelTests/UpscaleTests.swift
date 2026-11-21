@@ -1,5 +1,5 @@
 import XCTest
-@testable import macawww
+@testable import macpixel
 
 final class UpscaleTests: XCTestCase {
     private func factor(_ px: [UInt8], _ w: Int, _ h: Int, limit: Int = 0) -> Int {

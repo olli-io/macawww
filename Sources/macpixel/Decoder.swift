@@ -137,27 +137,44 @@ enum Decoder {
         return (hash, try CacheFile(url: dst))
     }
 
-    static func decode(url: URL, to dst: URL) throws {
-        let opts = [kCGImageSourceShouldCache: false] as CFDictionary
-        guard let src = CGImageSourceCreateWithURL(url as CFURL, opts) else {
-            throw MCWError.decode("cannot read \(url.path)")
+    /// An image file, opened with ImageIO. `count` = the number of frames that macpixel shows.
+    struct Source {
+        let src: CGImageSource
+        let path: String
+        let animated: Bool
+        let count: Int
+
+        init(url: URL) throws {
+            let opts = [kCGImageSourceShouldCache: false] as CFDictionary
+            guard let src = CGImageSourceCreateWithURL(url as CFURL, opts) else {
+                throw MCWError.decode("cannot read \(url.path)")
+            }
+            let total = CGImageSourceGetCount(src)
+            guard total > 0 else { throw MCWError.decode("no image in \(url.path)") }
+            self.src = src
+            path = url.path
+            animated = total > 1 && animatedTypes.contains(CGImageSourceGetType(src) as String? ?? "")
+            count = animated ? total : 1
         }
-        let total = CGImageSourceGetCount(src)
-        guard total > 0 else { throw MCWError.decode("no image in \(url.path)") }
-        let type = CGImageSourceGetType(src) as String? ?? ""
-        let animated = total > 1 && animatedTypes.contains(type)
-        // Still images: apply EXIF orientation. Thumbnails never scale up.
-        let thumb: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
-                                      kCGImageSourceCreateThumbnailWithTransform: true,
-                                      kCGImageSourceShouldCache: false,
-                                      kCGImageSourceThumbnailMaxPixelSize: Cache.maxSide]
+
         func image(_ i: Int) throws -> CGImage {
-            let img = animated ? CGImageSourceCreateImageAtIndex(src, i, opts)
-                               : CGImageSourceCreateThumbnailAtIndex(src, 0, thumb as CFDictionary)
-            guard let img else { throw MCWError.decode("cannot decode frame \(i) of \(url.path)") }
+            // Still images: apply EXIF orientation. Thumbnails never scale up.
+            let thumb: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                          kCGImageSourceCreateThumbnailWithTransform: true,
+                                          kCGImageSourceShouldCache: false,
+                                          kCGImageSourceThumbnailMaxPixelSize: Cache.maxSide]
+            let img = animated
+                ? CGImageSourceCreateImageAtIndex(src, i, [kCGImageSourceShouldCache: false] as CFDictionary)
+                : CGImageSourceCreateThumbnailAtIndex(src, 0, thumb as CFDictionary)
+            guard let img else { throw MCWError.decode("cannot decode frame \(i) of \(path)") }
             return img
         }
-        var first: CGImage? = try image(0)
+    }
+
+    static func decode(url: URL, to dst: URL) throws {
+        let source = try Source(url: url)
+        let src = source.src, animated = source.animated
+        var first: CGImage? = try source.image(0)
         let w = first?.width ?? 0, h = first?.height ?? 0
         guard (1...Cache.maxSide).contains(w), (1...Cache.maxSide).contains(h) else {
             throw MCWError.decode("image size \(w)x\(h) not supported")
@@ -182,9 +199,9 @@ enum Decoder {
             }
             let enc = try FrameEncoder(width: w / n, height: h / n, dst: dst)
             var smaller = 0
-            for i in 0..<(animated ? total : 1) where smaller == 0 {
+            for i in 0..<source.count where smaller == 0 {
                 try autoreleasepool {
-                    let img = try first ?? image(i)
+                    let img = try first ?? source.image(i)
                     first = nil
                     if let stage, let stageCtx {
                         stageCtx.draw(img, in: rect)

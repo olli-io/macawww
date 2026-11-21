@@ -2,19 +2,19 @@
 import PackageDescription
 
 let package = Package(
-    name: "macawww",
+    name: "macpixel",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
-            name: "macawww",
-            path: "Sources/macawww",
+            name: "macpixel",
+            path: "Sources/macpixel",
             swiftSettings: [.unsafeFlags(["-Osize"], .when(configuration: .release))],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-dead_strip"], .when(configuration: .release))]
         ),
         .testTarget(
-            name: "macawwwTests",
-            dependencies: ["macawww"],
-            path: "Tests/macawwwTests"
+            name: "macpixelTests",
+            dependencies: ["macpixel"],
+            path: "Tests/macpixelTests"
         ),
     ]
 )

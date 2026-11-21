@@ -1,13 +1,14 @@
 import Foundation
 
 let usageText = """
-usage: macawww <command>
+usage: macpixel <command>
   daemon                                       start the daemon (foreground)
   img <path|dir> [--screen <id|all>] [--fx <name>]
                                                set wallpaper; a directory shows a file list
   <dir> [--screen <id|all>] [--fx <name>]      short form of img <dir>
   clear [--color <hex>] [--screen <id|all>] [--fx <name>]
                                                solid colour (default #000000)
+  check [<dir>]                                list the images that are not pixel art
   query                                        show screens and state
   pause | resume                               manual pause
   kill                                         stop the daemon
@@ -107,6 +108,10 @@ case "clear":
     let (pos, o) = parseArgs(cliRest, options: ["screen", "color", "fx"])
     guard pos.isEmpty, let c = Target.parseColor(o["color"] ?? "#000000") else { usage() }
     exit(Client.send(["clear", String(format: "%06X", c), screenArg(o), fxArg(o)]))
+case "check":
+    // Client only: no daemon, no cache file (SPEC §4).
+    guard cliRest.count <= 1 else { usage() }
+    exit(Check.run(cliRest.first ?? "."))
 case "query", "pause", "resume", "kill":
     guard cliRest.isEmpty else { usage() }
     exit(Client.send([cliCommand]))
@@ -120,7 +125,7 @@ case "help", "-h", "--help":
     print(usageText)
     exit(0)
 default:
-    // Short form: `macawww <dir>` = `macawww img <dir>`.
+    // Short form: `macpixel <dir>` = `macpixel img <dir>`.
     guard isDirectory(cliCommand) else { usage() }
     imgCommand(cliArgs)
 }

@@ -1,6 +1,6 @@
-# macawww
+# macpixel
 
-Lean macOS wallpaper manager with animated GIF support. `SPEC.md` is the source of truth. Read it before you change the design.
+Purist pixel art wallpaper engine for macOS, with animated GIF support. `SPEC.md` is the source of truth. Read it before you change the design.
 
 ## Build and test
 
@@ -9,7 +9,7 @@ swift build -c release
 swift test
 ```
 
-Builds only on macOS 14+. On Linux: edit only, do not try to build.
+Builds only on macOS 14+. Apple silicon only. On Linux: edit only, do not try to build.
 
 ## Rules
 

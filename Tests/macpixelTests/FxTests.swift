@@ -1,5 +1,5 @@
 import XCTest
-@testable import macawww
+@testable import macpixel
 
 final class FxTests: XCTestCase {
     private let grid = [FxKind.burn, .sweep, .wipe]

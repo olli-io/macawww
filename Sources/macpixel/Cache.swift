@@ -50,7 +50,7 @@ enum Cache {
 
     static var dir: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/macawww", isDirectory: true)
+            .appendingPathComponent("Library/Caches/macpixel", isDirectory: true)
     }
 
     static func url(hash: String) -> URL { dir.appendingPathComponent(hash + ".mcw") }

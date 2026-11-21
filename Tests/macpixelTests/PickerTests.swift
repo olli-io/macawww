@@ -1,10 +1,10 @@
 import XCTest
-@testable import macawww
+@testable import macpixel
 
 final class PickerTests: XCTestCase {
     func testImagesFilterAndOrder() throws {
         let fm = FileManager.default
-        let dir = fm.temporaryDirectory.appendingPathComponent("macawww-picker-\(UUID().uuidString)")
+        let dir = fm.temporaryDirectory.appendingPathComponent("macpixel-picker-\(UUID().uuidString)")
         try fm.createDirectory(at: dir.appendingPathComponent("dir.gif"), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: dir) }
         for name in ["b10.gif", "b2.GIF", "a.png", "c.jpg", "d.jpeg", "e.txt", ".hidden.gif", "noext"] {

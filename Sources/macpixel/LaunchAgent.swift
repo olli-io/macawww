@@ -2,7 +2,7 @@ import Foundation
 
 /// Start at login (SPEC §12).
 enum LaunchAgent {
-    static let label = "io.macawww.daemon"
+    static let label = "io.macpixel.daemon"
 
     private static var home: URL { FileManager.default.homeDirectoryForCurrentUser }
     static var plistURL: URL { home.appendingPathComponent("Library/LaunchAgents/\(label).plist") }
@@ -13,7 +13,7 @@ enum LaunchAgent {
             eprint("cannot find own binary path")
             return 1
         }
-        let log = home.appendingPathComponent("Library/Logs/macawww.log")
+        let log = home.appendingPathComponent("Library/Logs/macpixel.log")
         let plist: [String: Any] = [
             "Label": label,
             "ProgramArguments": [exe, "daemon"],

@@ -1,6 +1,6 @@
 import ImageIO
 import XCTest
-@testable import macawww
+@testable import macpixel
 
 final class DecoderTests: XCTestCase {
     func testRoundTripSmall() throws {

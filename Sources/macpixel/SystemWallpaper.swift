@@ -1,7 +1,7 @@
 import AppKit
 import ImageIO
 
-/// Keeps the macOS desktop picture equal to the macawww wallpaper (SPEC §16). Main thread only,
+/// Keeps the macOS desktop picture equal to the macpixel wallpaper (SPEC §16). Main thread only,
 /// except the two `render` functions, which run in a child process.
 final class SystemWallpaper {
     private struct Want {

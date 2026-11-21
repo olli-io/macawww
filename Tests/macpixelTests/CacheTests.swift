@@ -1,5 +1,5 @@
 import XCTest
-@testable import macawww
+@testable import macpixel
 
 final class CacheTests: XCTestCase {
     private func validFile() throws -> URL {

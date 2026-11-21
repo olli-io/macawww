@@ -1,7 +1,7 @@
 import Foundation
 
 func eprint(_ s: String) {
-    FileHandle.standardError.write(Data(("macawww: " + s + "\n").utf8))
+    FileHandle.standardError.write(Data(("macpixel: " + s + "\n").utf8))
 }
 
 /// Calls `body` with a `sockaddr_un` for `path`. Nil when the path is too long.
@@ -76,7 +76,7 @@ enum Reply {
 
 /// Socket client (SPEC §3). Request: JSON array of strings, one line. Reply: one JSON object, one line.
 enum Client {
-    static var socketPath: String { NSTemporaryDirectory() + "macawww.sock" }
+    static var socketPath: String { NSTemporaryDirectory() + "macpixel.sock" }
 
     static func connectSocket() -> Int32? {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)

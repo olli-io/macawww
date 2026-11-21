@@ -1,7 +1,7 @@
 import AppKit
 import os
 
-let logger = Logger(subsystem: "io.macawww", category: "daemon")
+let logger = Logger(subsystem: "io.macpixel", category: "daemon")
 
 enum Target: Equatable {
     case img(String)
@@ -70,7 +70,7 @@ final class Server {
 final class Daemon {
     static var supportDir: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/macawww", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/macpixel", isDirectory: true)
     }
     private static var stateURL: URL { supportDir.appendingPathComponent("state") }
     private static var instance: Daemon?
@@ -85,7 +85,7 @@ final class Daemon {
     private var loading = Set<String>()
     private var server: Server?
     private var signals: [DispatchSourceSignal] = []
-    private let queue = DispatchQueue(label: "io.macawww.decode", qos: .utility)
+    private let queue = DispatchQueue(label: "io.macpixel.decode", qos: .utility)
 
     static func run() -> Never {
         let app = NSApplication.shared
