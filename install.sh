@@ -1,16 +1,18 @@
 #!/bin/sh
-# Builds macawww, copies the binary, and starts the daemon at login.
+# Downloads the released macpixel binary, copies it to a bin directory, and starts the daemon at login.
+# To build from source, see "Build" in README.md.
 #
-# usage: install.sh [--bin-dir <dir>] [--no-agent]
-#   --bin-dir <dir>   where to put the binary (default: ~/.local/bin)
-#   --no-agent        copy the binary only; do not start the daemon at login
-#
-# Run it from a checkout, or pipe it from curl. With curl, it clones the source into a temporary directory.
+# usage: install.sh [--bin-dir <dir>] [--version <vX.Y.Z>] [--no-agent]
+#   --bin-dir <dir>      where to put the binary (default: ~/.local/bin)
+#   --version <vX.Y.Z>   the release to install (default: the latest release)
+#   --no-agent           copy the binary only; do not start the daemon at login
 
 set -eu
 
-REPO="https://github.com/olli-io/macawww"
+REPO="olli-io/macpixel"
+ASSET="macpixel-arm64-macos"
 BIN_DIR="$HOME/.local/bin"
+VERSION=""
 AGENT=1
 
 while [ $# -gt 0 ]; do
@@ -20,12 +22,17 @@ while [ $# -gt 0 ]; do
             BIN_DIR="$2"
             shift 2
             ;;
+        --version)
+            [ $# -ge 2 ] || { echo "install.sh: --version needs a release tag" >&2; exit 2; }
+            VERSION="$2"
+            shift 2
+            ;;
         --no-agent)
             AGENT=0
             shift
             ;;
         *)
-            echo "usage: install.sh [--bin-dir <dir>] [--no-agent]" >&2
+            echo "usage: install.sh [--bin-dir <dir>] [--version <vX.Y.Z>] [--no-agent]" >&2
             exit 2
             ;;
     esac
@@ -36,40 +43,39 @@ fail() {
     exit 1
 }
 
-[ "$(uname -s)" = "Darwin" ] || fail "macawww builds only on macOS"
-[ "$(sw_vers -productVersion | cut -d. -f1)" -ge 14 ] || fail "macawww needs macOS 14 or later"
-command -v swift >/dev/null 2>&1 || fail "swift not found. Install Xcode or run: xcode-select --install"
+[ "$(uname -s)" = "Darwin" ] || fail "macpixel runs only on macOS"
+[ "$(uname -m)" = "arm64" ] || fail "macpixel runs only on Apple silicon"
+[ "$(sw_vers -productVersion | cut -d. -f1)" -ge 14 ] || fail "macpixel needs macOS 14 or later"
 
-# Use the checkout that contains this script. If there is none (curl), clone the source.
-SRC="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
-TMP=""
-if [ -z "$SRC" ] || ! grep -q 'name: "macawww"' "$SRC/Package.swift" 2>/dev/null; then
-    command -v git >/dev/null 2>&1 || fail "git not found"
-    TMP="$(mktemp -d)"
-    trap 'rm -rf "$TMP"' EXIT
-    echo "Getting the source from $REPO"
-    git clone --quiet --depth 1 "$REPO" "$TMP/macawww"
-    SRC="$TMP/macawww"
+if [ -n "$VERSION" ]; then
+    URL="https://github.com/$REPO/releases/download/$VERSION"
+else
+    URL="https://github.com/$REPO/releases/latest/download"
 fi
 
-echo "Building (release)"
-(cd "$SRC" && swift build -c release)
-BUILT="$SRC/.build/release/macawww"
-[ -x "$BUILT" ] || fail "the build gave no binary"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
-DEST="$BIN_DIR/macawww"
-PLIST="$HOME/Library/LaunchAgents/io.macawww.daemon.plist"
+echo "Getting $ASSET from $URL"
+for f in "$ASSET" SHA256SUMS; do
+    curl -fsSL -o "$TMP/$f" "$URL/$f" || fail "cannot download $URL/$f"
+done
+(cd "$TMP" && grep "  $ASSET\$" SHA256SUMS | shasum -a 256 -c - >/dev/null) || fail "the checksum of $ASSET is incorrect"
+NEW="$TMP/$ASSET"
+chmod 755 "$NEW"
+
+DEST="$BIN_DIR/macpixel"
+PLIST="$HOME/Library/LaunchAgents/io.macpixel.daemon.plist"
 
 if [ "$AGENT" -eq 1 ]; then
     # Stop the old daemon before the binary changes. The wallpaper state stays on disk.
-    if [ -f "$PLIST" ]; then "$BUILT" uninstall >/dev/null 2>&1 || true; fi
-    "$BUILT" kill >/dev/null 2>&1 || true
+    if [ -f "$PLIST" ]; then "$NEW" uninstall >/dev/null 2>&1 || true; fi
+    "$NEW" kill >/dev/null 2>&1 || true
 fi
 
 mkdir -p "$BIN_DIR"
 # Copy to a temporary name, then rename: a binary that runs is not written in place.
-cp "$BUILT" "$DEST.new"
-chmod 755 "$DEST.new"
+cp "$NEW" "$DEST.new"
 mv -f "$DEST.new" "$DEST"
 echo "Installed $DEST"
 
@@ -84,4 +90,4 @@ case ":$PATH:" in
        echo "  export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
 
-echo "Set a wallpaper with: macawww img <path>"
+echo "Set a wallpaper with: macpixel img <path>"
