@@ -138,7 +138,7 @@ The first use of an image takes a moment, because macpixel decodes it and writes
 
 ## Transitions
 
-`img` and `clear` show the change with a transition, after the effects of [ttfx](https://github.com/omacom/ttfx). A transition runs on a grid of 540 × 270 cells and takes 1.5 to 3 seconds.
+`img` and `clear` show the change with a transition, after the effects of [ttfx](https://github.com/omacom/ttfx). A transition runs on a grid of 540 × 270 cells and takes 1.5 to 3.5 seconds.
 
 | Name | Effect |
 |---|---|
@@ -146,6 +146,11 @@ The first use of an image takes a moment, because macpixel decodes it and writes
 | `sweep` | A shimmer of colours goes from left to right and leaves the new wallpaper. |
 | `slide` | The new wallpaper comes in from the left, in bands of rows. |
 | `wipe` | A diagonal band of colours goes from the top left to the bottom right. |
+| `decrypt` | Green symbols flood the screen and change. A second flood shows the new wallpaper. |
+| `pour` | Tiles of the new wallpaper fall and fill the screen from the bottom. |
+| `smoke` | Smoke floods the screen from a random cell. |
+| `vhstape` | Lines lose their colour and jump to the side. Noise covers the screen. Then each line flashes and shows the new wallpaper. |
+| `rain` | Drops of the new wallpaper fall and fill the screen from the bottom. |
 | `disabled` | No transition. |
 
 ```sh
@@ -246,7 +251,7 @@ The `config` file has one `key = value` pair on each line. Restart the daemon af
 | Key | Default | Function |
 |---|---|---|
 | `max_cache_mb` | `512` | Maximum size of the cache directory in MB. macpixel deletes the files that were used least recently. |
-| `transition` | `burn` | The transition of `img` and `clear`: `burn`, `sweep`, `slide`, `wipe` or `disabled`. |
+| `transition` | `burn` | The transition of `img` and `clear`: `burn`, `sweep`, `slide`, `wipe`, `decrypt`, `pour`, `smoke`, `vhstape`, `rain` or `disabled`. |
 
 ## Problems
 

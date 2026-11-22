@@ -6,20 +6,25 @@ import IOSurface
 /// The window server composes the transition. Above the image layer of each screen (which
 /// already shows the new wallpaper) there is a temporary `box` layer:
 /// - `old`: a copy of the image layer before the change. Its mask is the right half of the grid.
+/// - one clip layer for each piece of the effect, with a copy of an image layer.
 /// - grid kinds: a layer with the left half of the grid (the colours).
-/// - slide: one clip layer for each band, with a copy of the new image layer.
 final class Transition {
     private struct Part {
         let box: CALayer
         let old: CALayer
         let oldPlayer: Player?
         let newPlayer: Player?
-        let bands: [(clip: CALayer, img: CALayer)]
+        let pieces: [(clip: CALayer, img: CALayer)]
+        /// vhstape: the sources of the pieces.
+        let tints: [Tint]
         /// The grid in the root layer, in points. A cell is `cell` points.
         let grid: CGRect
         let cell: CGFloat
-        /// Origin of the new image layer.
-        let home: CGPoint
+        /// Width of the screen in points.
+        let width: CGFloat
+        /// Origins of the new and of the old image layer.
+        let newHome: CGPoint
+        let oldHome: CGPoint
     }
 
     private let effect: Effect
@@ -28,7 +33,9 @@ final class Transition {
     private var back: IOSurfaceRef?
     private var gridLayers: [CALayer] = []
     private var parts: [Part] = []
-    private var pending: (old: CALayer, player: Player?)?
+    /// The piece that each clip layer of each part shows.
+    private var shown: [[Piece]] = []
+    private var pending: (old: CALayer, player: Player?, color: UInt32)?
     private var timer: DispatchSourceTimer?
     private var onEnd: () -> Void = {}
     private var ended = false
@@ -38,7 +45,7 @@ final class Transition {
     init?(_ kind: FxKind) {
         guard kind != .disabled else { return nil }
         effect = Effect(kind: kind, seed: DispatchTime.now().uptimeNanoseconds)
-        guard kind != .slide else { return }
+        guard effect.hasGrid else { return }
         let w = Effect.gridW * 2, h = Effect.gridH
         guard let f = Player.surface(w, h), let b = Player.surface(w, h) else { return nil }
         front = f
@@ -81,12 +88,12 @@ final class Transition {
     func before(_ s: Screen) {
         let old = Transition.replica(s.layer)
         s.player?.attach(old)
-        pending = (old, s.player)
+        pending = (old, s.player, s.color ?? 0)
     }
 
     /// Call after `Screens.show`. `changed`: the screen shows a different wallpaper now.
     func after(_ s: Screen, changed: Bool) {
-        guard let (old, oldPlayer) = pending else { return }
+        guard let (old, oldPlayer, oldColor) = pending else { return }
         pending = nil
         guard changed, let root = s.layer.superlayer else {
             oldPlayer?.detach(old)
@@ -96,23 +103,30 @@ final class Transition {
         let cell = CGFloat(at.k) / s.scale
         let grid = CGRect(x: CGFloat(at.x) / s.scale, y: CGFloat(at.y) / s.scale,
                           width: CGFloat(Effect.gridW) * cell, height: CGFloat(Effect.gridH) * cell)
-        var bands: [(clip: CALayer, img: CALayer)] = []
+        // vhstape moves the old wallpaper. The other effects move the new one.
+        let tints = effect.kind == .vhstape ? Tint.make(player: oldPlayer, color: oldColor) : []
+        var pieces: [(clip: CALayer, img: CALayer)] = []
+        pieces.reserveCapacity(effect.pieces.count)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let box = CALayer()
         box.frame = root.bounds
         box.addSublayer(old)
-        if effect.kind == .slide {
-            for _ in 0..<Effect.bands {
-                let clip = CALayer()
-                clip.masksToBounds = true
-                let img = Transition.replica(s.layer)
+        for _ in effect.pieces {
+            let clip = CALayer()
+            clip.masksToBounds = true
+            clip.isHidden = true
+            let img = Transition.replica(tints.isEmpty ? s.layer : old)
+            if tints.isEmpty {
                 s.player?.attach(img)
-                clip.addSublayer(img)
-                box.addSublayer(clip)
-                bands.append((clip, img))
+            } else {
+                clip.backgroundColor = CGColor(gray: 0, alpha: 1)  // the end of a moved line
             }
-        } else {
+            clip.addSublayer(img)
+            box.addSublayer(clip)
+            pieces.append((clip, img))
+        }
+        if effect.hasGrid {
             // The frame of a mask is in the coordinates of its layer.
             let mask = gridLayer(x: 0.5)
             mask.frame = grid.offsetBy(dx: -old.frame.minX, dy: -old.frame.minY)
@@ -123,8 +137,10 @@ final class Transition {
         }
         root.addSublayer(box)
         CATransaction.commit()
-        parts.append(Part(box: box, old: old, oldPlayer: oldPlayer, newPlayer: s.player, bands: bands,
-                          grid: grid, cell: cell, home: s.layer.frame.origin))
+        parts.append(Part(box: box, old: old, oldPlayer: oldPlayer, newPlayer: s.player, pieces: pieces,
+                          tints: tints, grid: grid, cell: cell, width: root.bounds.width,
+                          newHome: s.layer.frame.origin, oldHome: old.frame.origin))
+        shown.append([Piece](repeating: Piece(), count: pieces.count))
         windows.append((s.window, s.id))
     }
 
@@ -141,14 +157,12 @@ final class Transition {
         return true
     }
 
-    /// One step. Only the grid surface gets pixel writes. No logging.
+    /// One step. Only the grid surface gets pixel writes. No allocation, no logging.
     private func tick() {
         guard effect.advance() else { return end() }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        if effect.kind == .slide {
-            for p in parts { slide(p) }
-        } else if let b = back, IOSurfaceLock(b, [], nil) == 0 {
+        if let b = back, IOSurfaceLock(b, [], nil) == 0 {
             // A lock failure skips this step. The next step draws the full grid.
             effect.render(IOSurfaceGetBaseAddress(b), stride: IOSurfaceGetBytesPerRow(b))
             IOSurfaceUnlock(b, [], nil)
@@ -156,24 +170,38 @@ final class Transition {
             back = front
             front = b
         }
+        // Only the layers of the pieces that changed get new values.
+        for p in 0..<parts.count {
+            for i in 0..<effect.pieces.count where shown[p][i] != effect.pieces[i] {
+                shown[p][i] = effect.pieces[i]
+                place(parts[p], i, effect.pieces[i])
+            }
+        }
         CATransaction.commit()
     }
 
-    /// Moves the bands of one screen to the current step. Layer y goes up, grid rows go down.
-    private func slide(_ p: Part) {
-        let step = effect.step
-        var band = max(0, step - Effect.slideSteps)
-        let last = min(step, Effect.bands)
-        while band < last {
-            let edge = Effect.slideEdge(band: band, step: step)
-            let y0 = band * Effect.bandH, y1 = min(Effect.gridH, y0 + Effect.bandH)
-            let clip = CGRect(x: p.grid.minX, y: p.grid.maxY - CGFloat(y1) * p.cell,
-                              width: CGFloat(edge) * p.cell, height: CGFloat(y1 - y0) * p.cell)
-            let shift = CGFloat(Effect.gridW - edge) * p.cell
-            p.bands[band].clip.frame = clip
-            p.bands[band].img.frame.origin = CGPoint(x: p.home.x - shift - clip.minX, y: p.home.y - clip.minY)
-            band += 1
+    /// Shows the piece `pc` with clip layer `i` of one screen. Layer y goes up, grid rows go down.
+    private func place(_ p: Part, _ i: Int, _ pc: Piece) {
+        let (clip, img) = p.pieces[i]
+        clip.isHidden = pc.w == 0 || pc.h == 0
+        if clip.isHidden { return }
+        let r = CGRect(x: p.grid.minX + CGFloat(pc.x) * p.cell, y: p.grid.maxY - CGFloat(pc.y + pc.h) * p.cell,
+                       width: CGFloat(pc.w) * p.cell, height: CGFloat(pc.h) * p.cell)
+        var dx = CGFloat(pc.dx) * p.cell, dy = CGFloat(pc.dy) * p.cell
+        var home = p.newHome
+        if pc.src == 0 {
+            // The grid can be larger than the screen. The limits keep the source inside the
+            // screen, which the wallpaper covers.
+            dx = min(dx, max(0, p.width - r.maxX))
+            dy = min(dy, max(0, r.minY))
+        } else {
+            home = p.oldHome
+            let tint = p.tints[pc.src - 1]
+            img.contents = tint.surface
+            if let color = tint.color { img.backgroundColor = color }
         }
+        clip.frame = r
+        img.frame.origin = CGPoint(x: home.x - dx - r.minX, y: home.y + dy - r.minY)
     }
 
     /// Removes the temporary layers. The screens then show only the new wallpaper.
@@ -182,23 +210,27 @@ final class Transition {
         ended = true
         timer?.cancel()
         timer = nil
-        if let (old, player) = pending { player?.detach(old) }
+        if let (old, player, _) = pending { player?.detach(old) }
         pending = nil
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for p in parts {
             p.box.removeFromSuperlayer()
             p.oldPlayer?.detach(p.old)
-            for b in p.bands { p.newPlayer?.detach(b.img) }
+            if p.tints.isEmpty { for piece in p.pieces { p.newPlayer?.detach(piece.img) } }
         }
         CATransaction.commit()
         parts = []
+        shown = []
         gridLayers = []
         onEnd()
     }
 }
 
 extension Effect {
+    /// False for slide, which has only pieces.
+    var hasGrid: Bool { !disp.isEmpty }
+
     /// Writes the grid as BGRA pixels, 2 × gridW by gridH. Row 0 is the top row.
     /// Left half: the colours, above the wallpapers. Right half: the mask of the old
     /// wallpaper (alpha 0 where the cell shows the new one). No allocation.

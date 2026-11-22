@@ -226,7 +226,7 @@ Dir: `~/Library/Application Support/macpixel/`.
 - `state`: one line per target, `<id|all> img <path>` or `<id|all> color <hex>`. Written on each change (temp file + rename). Read at daemon start.
 - `config` (optional, `key = value`):
   - `max_cache_mb` (int, default `512`)
-  - `transition` (`burn`, `sweep`, `slide`, `wipe` or `disabled`, default `burn`; see §17)
+  - `transition` (`burn`, `sweep`, `slide`, `wipe`, `decrypt`, `pour`, `smoke`, `vhstape`, `rain` or `disabled`, default `burn`; see §17)
 
 The daemon reads `config` one time, at start.
 
@@ -268,8 +268,10 @@ Sources/macpixel/
   Cache.swift         file format, mmap reader, eviction
   Player.swift        IOSurface double buffer, timer
   Power.swift         pause signals → pause reasons
-  Fx.swift            transitions: cell grid, burn, sweep, wipe, slide timing
+  Fx.swift            transitions: cell grid, pieces, the parts that the effects share
+  Fx<Name>.swift      one effect each: Burn, Sweep, Wipe, Slide, Smoke, Decrypt, Vhstape; Fall is pour and rain
   Transition.swift    transitions: layers, grid surface, step timer
+  Tint.swift          vhstape: the old wallpaper in grey
   SystemWallpaper.swift  macOS desktop picture sync, still PNG
   Child.swift         child process for internal commands
   LaunchAgent.swift   install / uninstall
@@ -289,7 +291,7 @@ Unit:
 - Integer scale per screen: k for exact fit, for cut, and for art larger than the screen.
 - Still PNG for the macOS desktop picture: size, scale and cut are equal to the layer.
 - Double-buffer invariant over 3 loops, including 1, 2 and 3 frame animations.
-- Transitions: gradients, burn order, start and end of each kind, grid pixels, slide timing, grid placement.
+- Transitions: gradients, burn order, flood order, tile order, start and end of each kind, grid pixels, pieces, slide timing, grey, grid placement.
 
 Manual (macOS):
 - Hotplug, resolution change, mirror on/off.
@@ -327,24 +329,32 @@ For each screen, after its image, colour, frame or backing scale changed (the `o
 
 ## 17. Transitions
 
-`img` and `clear` show the change with a transition. The transitions are the effects of ttfx, as in pixelwp, changed to pixel-art cells. A restore (daemon start, new screen, reload after a cache miss) has no transition.
+`img` and `clear` show the change with a transition. The transitions are the effects of ttfx, as in waypixel, changed to pixel-art cells. A restore (daemon start, new screen, reload after a cache miss) has no transition.
 
-- **Selection:** `--fx <burn|sweep|slide|wipe|disabled>`. Without `--fx`, the client sends `config` and the daemon uses the `transition` key (§11). The default is `burn`.
+- **Selection:** `--fx <burn|sweep|slide|wipe|decrypt|pour|smoke|vhstape|rain|disabled>`. Without `--fx`, the client sends `config` and the daemon uses the `transition` key (§11). The default is `burn`.
 - **Grid:** 540 × 270 cells. Each screen shows it at the smallest whole-number scale that covers the screen (`max(ceil(W / 540), ceil(H / 270))`), centred on whole pixels. The overflow is cut.
 - **Step:** 33 ms. One repeating `DispatchSourceTimer` on the main queue for the transition. It exists only during the transition.
 - **Burn:** a fire starts at a random cell and spreads in the order of a random spanning tree (the simple Prim's algorithm), in approximately 60 steps. A cell burns for 11 steps (`FFFFFF` … `510100`), then shows the new wallpaper. One of 64 cells emits smoke, which rises for 16 steps.
-- **Sweep:** one pass. A shimmer of random colours (`8A008A` … `FFFFFF`) goes from left to right in 40 steps (`inOutQuad`) and leaves the new wallpaper. A cell shimmers for 4 steps. pixelwp has a first pass that leaves the old wallpaper in grey; macpixel does not.
+- **Sweep:** one pass. A shimmer of random colours (`8A008A` … `FFFFFF`) goes from left to right in 40 steps (`inOutQuad`) and leaves the new wallpaper. A cell shimmers for 4 steps. waypixel has a first pass that leaves the old wallpaper in grey; macpixel does not.
 - **Wipe:** the diagonals `x + y = d` start in 50 steps (`inOutQuad`), from the top left. A cell shows the colours `833AB4` … `FCB045` for 4 steps, then the new wallpaper.
-- **Slide:** bands of 6 rows. Band `b` starts at step `b + 1` and moves for 24 steps (`inOutQuad`). It shows the new wallpaper moved to the left, with its right edge at the band edge.
+- **Slide:** bands of 6 rows. Band `b` starts at step `⌊3b / 4⌋ + 1` and moves for 24 steps (`inOutQuad`). It shows the new wallpaper moved to the left, with its right edge at the band edge.
+- **Smoke:** a random spanning tree grows from a random cell, each time to the adjacent cell with the lowest random weight. The cells start in the order of their depth in the tree, at a rate that starts all cells in 60 steps. A cell shows 8 colours (`242424`, `FFFFFF`, `00D1FF`, `8A008A`) for 16 steps, then the new wallpaper.
+- **Decrypt:** a symbol is 4 × 6 cells: a glyph of 3 × 5 cells on black, with a gap of 1 cell at the right and at the bottom. The symbols start in the order of their depth in a random spanning tree of the symbol grid, as in smoke, in 30 steps. A new symbol shows a random glyph in white for 3 steps, then in one of the greens `008000`, `00CB00`, `00FF00`. A green symbol gets a new glyph and green with a probability of 1/4 for each step. The end steps come from a second such order from a different random symbol: from step 16, in 40 steps. A symbol ends 14 steps after its start at the earliest. Before its end step the glyph of a symbol is white for 3 steps. Then the symbol shows the new wallpaper.
+- **Pour:** tiles of 15 × 15 cells, from the bottom row up. Each row has the opposite direction to the row below. 7 tiles start in each step. A tile falls from above the top row for 10 to 15 steps (`inQuad`). It shows the new wallpaper of its position, moved up. At its position it shows the new wallpaper.
+- **Rain:** tiles of 6 × 6 cells, from the bottom row up, in a random order across 3 rows. 68 drops start in each step. A drop is one column of 1 to 5 cells. It shows the new wallpaper of its tile, moved up. It falls from the top to its tile for 10 to 17 steps (`inQuart`). Then the tile shows the new wallpaper.
+- **Vhstape:** lines of 6 rows. For 50 steps: a wave of 3 lines (moved 24, 42 and 24 cells to the left) goes down in most steps, and starts again in the top half when it gets to the bottom. With a probability of 1/6 for each step, a random line jumps 12 to 60 cells to the left for 8 to 25 steps (3 lines at most). A moved line shows the old wallpaper in grey, and black at its end. While it moves (10 cells for each step), it shows only the red, green or blue channel. With a probability of 1/30 for each step, noise (6 greys, runs of 1 to 4 cells, new each 2 steps) covers all lines for 6 steps. Then all lines go back, and noise covers all lines for 14 steps. Then each line gets a random end step in a range of 24 steps. Before its end step a line is white for 3 steps. Then the line shows the new wallpaper. The other lines continue to show noise.
+- **Pieces:** a piece is a rect of cells that shows a wallpaper at a different position: a band of slide, a tile of pour, a drop of rain (the new wallpaper), a moved line of vhstape (the old wallpaper in grey). The effect holds a fixed list of pieces: 45 for slide and vhstape, 105 for pour, 1156 for rain (the maximum number of drops that fall at the same time). A step changes the values in the list. The cells below a piece keep the code of the old wallpaper.
 
 Composition (the window server does all scaling and mixing; macpixel writes no wallpaper pixels):
 
 - `Screens.show` puts the new wallpaper on the image layer at once. Above it, each screen gets a temporary layer with:
   - a copy of the image layer as it was before the change (the old wallpaper). It is a layer of the old player, so the old animation continues. The transition keeps the old player until its end.
-  - burn, sweep, wipe: the grid layers. One pair of IOSurfaces (`front`, `back`) of 1080 × 270 holds the grid: the left half is the colour of each cell (transparent when the cell shows a wallpaper), the right half is the mask of the old wallpaper (alpha 0 when the cell shows the new one). Two layers show the halves with `contentsRect` and the nearest filter: one is the mask of the old copy, one is above it. All screens share the surfaces.
-  - slide: no grid. One clip layer for each band, with a copy of the new image layer (a layer of the new player). A step sets the clip width and the copy position of the bands that move.
-- On a step, for burn, sweep and wipe: advance the cells, write the full grid into `back` (291 600 pixels), set `contents` of the grid layers, swap. No allocation, no logging.
-- At the end: remove the temporary layers, release the surfaces, the grid (approximately 4 MB in total) and the old player.
+  - the pieces: one clip layer for each piece of the effect, with a copy of an image layer. For the new wallpaper the copy is a layer of the new player, so the new animation plays in it. A step sets the hidden flag, the clip frame and the copy position, only for the pieces that changed. The move of the new wallpaper has a limit that keeps its source inside the screen, because the grid can be larger than the screen.
+  - all kinds but slide: the grid layers, above the pieces. One pair of IOSurfaces (`front`, `back`) of 1080 × 270 holds the grid: the left half is the colour of each cell (transparent when the cell shows a wallpaper), the right half is the mask of the old wallpaper (alpha 0 when the cell shows the new one). Two layers show the halves with `contentsRect` and the nearest filter: one is the mask of the old copy, one is above it. All screens share the surfaces.
+  - slide: no grid.
+- **Grey (vhstape):** at the start, for pixel art, one pass through the 1× pixels of the frame that the old player shows makes 4 surfaces of the 1× size: grey, and only the red, green or blue channel of that grey. The copy of a line shows one of them, and the clip layer is black. Thus the old animation does not play in a moved line (waypixel updates the grey image). An old wallpaper that is not pixel art can be large: it has no such pass and keeps its colours. An old colour gives 4 colours.
+- On a step, for all kinds but slide: advance the cells, write the full grid into `back` (291 600 pixels), set `contents` of the grid layers, swap. No allocation, no logging.
+- At the end: remove the temporary layers, release the surfaces, the grid (approximately 4 MB in total), the grey surfaces and the old player.
 
 Rules:
 

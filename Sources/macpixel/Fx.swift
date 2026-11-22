@@ -1,9 +1,9 @@
 import Foundation
 
 /// Name of a transition (SPEC §17).
-enum FxKind: String {
-    case burn, sweep, slide, wipe, disabled
-    static let names = "burn, sweep, slide, wipe or disabled"
+enum FxKind: String, CaseIterable {
+    case burn, sweep, slide, wipe, decrypt, pour, smoke, vhstape, rain, disabled
+    static let names = "burn, sweep, slide, wipe, decrypt, pour, smoke, vhstape, rain or disabled"
 }
 
 /// Linear congruential generator. No allocation.
@@ -16,8 +16,21 @@ struct Rng {
     }
 }
 
+/// A rect of cells that shows a wallpaper at a different position (SPEC §17).
+/// `Transition` shows each piece with a clip layer. No piece shows when `w` or `h` is 0.
+struct Piece: Equatable {
+    /// The rect in cells. `y` is the top row.
+    var x = 0, y = 0, w = 0, h = 0
+    /// The wallpaper is moved this number of cells to the left and up.
+    var dx = 0, dy = 0
+    /// 0 = the new wallpaper. 1 = the old wallpaper in grey. 2, 3, 4 = only the red, green
+    /// or blue channel of that grey.
+    var src = 0
+}
+
 /// A transition on a grid of cells (SPEC §17). After the effects of ttfx.
-/// This file has no AppKit code: `Transition` shows the grid.
+/// Each effect has its own file (`Fx<Name>.swift`). This file has the parts that they share.
+/// It has no AppKit code: `Transition` shows the grid and the pieces.
 final class Effect {
     static let gridW = 540, gridH = 270
     static let stepMs = 33
@@ -25,56 +38,66 @@ final class Effect {
     // Display codes. A code with the top byte 0xFF is an opaque colour (0xFFRRGGBB).
     static let old: UInt32 = 0
     static let new: UInt32 = 1
-
-    // burn
-    static let igniteSteps = 60  // approximate steps until all cells burn
-    static let fireSteps: UInt8 = 11  // steps for which a cell burns
-    static let fire = gradient([0xFFFFFF, 0xFFF75D, 0xFE650D, 0x8A003C, 0x510100])
-    static let smokeColors = gradient([0x504F4F, 0x6E6D6D, 0x8C8B8B, 0xA9A9A9, 0xC7C7C7])
-    static let smokeSteps = 16, smokeMax = 2000, smokeOneIn = 64
-    // sweep
-    static let sweepSteps = 40
-    static let shimmerSteps: UInt8 = 4
-    static let sweepColors = gradient([0x8A008A, 0x4569C5, 0x00D1FF, 0x80E8FF, 0xFFFFFF])
-    // wipe
-    static let wipeSteps = 50
-    static let wipeCellSteps: UInt8 = 4
-    static let wipeColors = gradient([0x833AB4, 0xC02C69, 0xFD1D1D, 0xFC6731, 0xFCB045])
-    // slide
-    static let bandH = 6, slideSteps = 24
-    static let bands = (gridH + bandH - 1) / bandH
+    static let black: UInt32 = 0xFF00_0000
+    static let white: UInt32 = 0xFFFF_FFFF
 
     /// Cell stage: 0 = no change, 1...steps = shows colours, `done` = complete.
-    private static let done = UInt8.max
+    static let done = UInt8.max
 
     let kind: FxKind
-    /// What each cell shows: a display code.
-    private(set) var disp: [UInt32] = []
-    private(set) var step = 0
-    private var rng: Rng
-    private var stage: [UInt8] = []
+    /// What each cell shows: a display code. Empty for slide, which has only pieces.
+    var disp: [UInt32] = []
+    /// slide: the bands. pour, rain: the drops. vhstape: the lines. The count does not change.
+    var pieces: [Piece] = []
+    var step = 0
+    var rng: Rng
+    /// The stage of each cell. decrypt: the stage of each symbol.
+    var stage: [UInt8] = []
     /// The cells that show colours.
-    private var active: [Int32] = []
-    /// burn: the cells in the order in which they start to burn.
-    private var order: [Int32] = []
-    private var head = 0
-    private var smoke: [(x: Int, y: Int, age: Int)] = []
+    var active: [Int32] = []
+    /// burn, smoke: the cells in the order in which they start.
+    /// pour, rain: the tiles in the order in which their drops start.
+    /// decrypt: the symbols in the order in which they start.
+    var order: [Int32] = []
+    /// decrypt: the end step of each symbol.
+    var ends: [Int32] = []
+    /// Count of the items of `order` that have started. vhstape: the top line of the wave.
+    var head = 0
+    var smoke: [(x: Int, y: Int, age: Int)] = []
+    var drops: [Drop] = []
+    var lines: [Line] = []
     /// sweep, wipe: count of columns or diagonals that have started.
-    private var groups = 0
-    /// sweep, wipe: count of steps in this phase.
-    private var t = 0
+    /// decrypt, vhstape: count of symbols or lines that show the new wallpaper.
+    var groups = 0
+    /// sweep, wipe: count of steps. vhstape: count of steps of noise that remain.
+    var t = 0
+    /// vhstape: the noise before the end has started.
+    var second = false
 
     init(kind: FxKind, seed: UInt64) {
         self.kind = kind
         rng = Rng(state: seed)
-        guard kind != .slide else { return }  // slide has no grid: see `slideEdge`
-        let n = Effect.gridW * Effect.gridH
-        disp = [UInt32](repeating: Effect.old, count: n)
-        stage = [UInt8](repeating: 0, count: n)
-        active.reserveCapacity(n)  // each cell is in the list one time at most
-        if kind == .burn {
+        let w = Effect.gridW, h = Effect.gridH
+        guard kind != .slide else {
+            pieces = [Piece](repeating: Piece(), count: Effect.bands)
+            return
+        }
+        disp = [UInt32](repeating: Effect.old, count: w * h)
+        switch kind {
+        case .burn:
             order = Effect.primsOrder(&rng)
             smoke.reserveCapacity(Effect.smokeMax)
+        case .smoke: order = Effect.floodOrder(&rng, w, h)
+        case .decrypt: setupDecrypt()
+        case .pour, .rain: setupFall()
+        case .vhstape:
+            lines = [Line](repeating: Line(), count: h / Effect.lineH)
+            pieces = [Piece](repeating: Piece(), count: lines.count)
+        default: break
+        }
+        if [.burn, .sweep, .wipe, .smoke].contains(kind) {
+            stage = [UInt8](repeating: 0, count: w * h)
+            active.reserveCapacity(w * h)  // each cell is in the list one time at most
         }
     }
 
@@ -98,63 +121,83 @@ final class Effect {
         return 1 - u * u / 2
     }
 
-    /// The order in which the simple Prim's algorithm links the cells.
-    static func primsOrder(_ rng: inout Rng) -> [Int32] {
-        let w = gridW, h = gridH, n = w * h
-        var linked = [Bool](repeating: false, count: n)
-        var near = [0, 0, 0, 0]
-        /// Puts the unlinked neighbours of `c` into `near`. Returns their count.
-        func unlinked(_ c: Int) -> Int {
-            let x = c % w, y = c / w
-            var count = 0
-            if y > 0, !linked[c - w] { near[count] = c - w; count += 1 }
-            if x + 1 < w, !linked[c + 1] { near[count] = c + 1; count += 1 }
-            if y + 1 < h, !linked[c + w] { near[count] = c + w; count += 1 }
-            if x > 0, !linked[c - 1] { near[count] = c - 1; count += 1 }
-            return count
+    /// The cells of a grid of `w` × `h` in the order of their depth in a random spanning tree.
+    /// The tree grows from a random cell, each time to the adjacent cell with the lowest
+    /// random weight (Prim's algorithm with weights on the cells).
+    static func floodOrder(_ rng: inout Rng, _ w: Int, _ h: Int) -> [Int32] {
+        let n = w * h, none = Int32.max
+        // heap key: weight << 32 | cell
+        var key = [UInt64](repeating: 0, count: n)
+        for c in 0..<n { key[c] = UInt64(rng.below(1 << 30)) << 32 | UInt64(c) }
+        /// In the tree: the depth. In the heap: the lowest depth that the cell can get.
+        var depth = [Int32](repeating: none, count: n)
+        var inTree = [Bool](repeating: false, count: n)
+        var heap: [UInt64] = []
+        heap.reserveCapacity(n)  // each cell is in the heap one time at most
+        func push(_ k: UInt64) {
+            var i = heap.count
+            heap.append(k)
+            while i > 0, heap[(i - 1) / 2] > k {
+                heap[i] = heap[(i - 1) / 2]
+                i = (i - 1) / 2
+            }
+            heap[i] = k
         }
-        let start = rng.below(n)
-        var order: [Int32] = [Int32(start)]
-        order.reserveCapacity(n)
-        var edges = [start]
-        while !edges.isEmpty {
-            // The edge list has no order, so a swap with the last element is sufficient.
-            let i = rng.below(edges.count)
-            let current = edges[i]
-            edges[i] = edges[edges.count - 1]
-            edges.removeLast()
-            let count = unlinked(current)
-            if count == 0 { continue }
-            let next = near[rng.below(count)]
-            linked[current] = true
-            linked[next] = true
-            order.append(Int32(next))
-            if count > 1 { edges.append(current) }
-            if unlinked(next) > 0 { edges.append(next) }
+        func pop() -> UInt64 {
+            let top = heap[0], k = heap.removeLast()
+            var i = 0
+            while i < heap.count {  // false when the heap is empty now
+                var child = 2 * i + 1
+                if child + 1 < heap.count, heap[child + 1] < heap[child] { child += 1 }
+                if child >= heap.count || heap[child] >= k { break }
+                heap[i] = heap[child]
+                i = child
+            }
+            if i < heap.count { heap[i] = k }
+            return top
+        }
+        func reach(_ to: Int, _ d: Int32) {
+            if inTree[to] { return }
+            if depth[to] == none { push(key[to]) }
+            depth[to] = min(depth[to], d)
+        }
+        var c = rng.below(n), deepest = 0
+        depth[c] = 0
+        while true {
+            inTree[c] = true
+            let x = c % w, y = c / w, d = depth[c]
+            deepest = max(deepest, Int(d))
+            if y > 0 { reach(c - w, d + 1) }
+            if x + 1 < w { reach(c + 1, d + 1) }
+            if y + 1 < h { reach(c + w, d + 1) }
+            if x > 0 { reach(c - 1, d + 1) }
+            if heap.isEmpty { break }
+            c = Int(pop() & 0xFFFF_FFFF)
+        }
+        // counting sort by depth
+        var at = [Int](repeating: 0, count: deepest + 2)
+        for d in depth { at[Int(d) + 1] += 1 }
+        for d in 1..<at.count { at[d] += at[d - 1] }
+        var order = [Int32](repeating: 0, count: n)
+        for c in 0..<n {
+            order[at[Int(depth[c])]] = Int32(c)
+            at[Int(depth[c])] += 1
         }
         return order
     }
 
-    /// slide: the count of columns of `band` that show the new wallpaper at `step`.
-    /// The band shows the new wallpaper moved `gridW - edge` cells to the left.
-    static func slideEdge(band: Int, step: Int) -> Int {
-        let local = step - band  // band b moves in the steps b+1 ... b+slideSteps
-        if local <= 0 { return 0 }
-        if local >= slideSteps { return gridW }
-        return Int(inOutQuad(Double(local) / Double(slideSteps)) * Double(gridW))
-    }
-
     /// (steps for which a cell shows colours, what it shows then)
-    private var plan: (steps: UInt8, end: UInt32) {
+    var plan: (steps: UInt8, end: UInt32) {
         switch kind {
         case .burn: return (Effect.fireSteps, Effect.new)
         case .wipe: return (Effect.wipeCellSteps, Effect.new)
+        case .smoke: return (Effect.floodCellSteps, Effect.new)
         default: return (Effect.shimmerSteps, Effect.new)
         }
     }
 
     /// What the cell shows at its stage, when no smoke is on it.
-    private func base(_ cell: Int) -> UInt32 {
+    func base(_ cell: Int) -> UInt32 {
         let (steps, end) = plan
         let s = stage[cell]
         if s == 0 { return Effect.old }
@@ -163,6 +206,7 @@ final class Effect {
         switch kind {
         case .burn: return Effect.fire[i * 8 / Int(steps)]
         case .wipe: return Effect.wipeColors[i * 8 / Int(steps)]
+        case .smoke: return Effect.floodColors[i * 8 / Int(steps)]
         default:
             // a random colour, which stays for 2 steps
             if i % 2 == 1 { return disp[cell] }
@@ -170,7 +214,7 @@ final class Effect {
         }
     }
 
-    private func start(_ cell: Int) {
+    func start(_ cell: Int) {
         stage[cell] = 1
         active.append(Int32(cell))
         let code = base(cell)
@@ -178,7 +222,7 @@ final class Effect {
     }
 
     /// Moves each active cell one stage on.
-    private func runActive() {
+    func runActive() {
         let (steps, end) = plan
         var i = 0
         while i < active.count {
@@ -194,14 +238,12 @@ final class Effect {
             active[i] = active[active.count - 1]
             active.removeLast()
             disp[cell] = end
-            if kind == .burn, smoke.count < Effect.smokeMax, rng.below(Effect.smokeOneIn) == 0 {
-                smoke.append((cell % Effect.gridW, cell / Effect.gridW, 0))
-            }
+            if kind == .burn { emitSmoke(cell) }
         }
     }
 
     /// The groups that start in this step, for a move with `inOutQuad` across `total` groups.
-    private func easedGroups(_ total: Int, steps: Int) -> Range<Int> {
+    func easedGroups(_ total: Int, steps: Int) -> Range<Int> {
         t += 1
         let p = Effect.inOutQuad(min(1, Double(t) / Double(steps)))
         let target = min(total, max(groups, Int((p * Double(total)).rounded())))
@@ -219,7 +261,12 @@ final class Effect {
         case .burn: complete = head == order.count && idle && smoke.isEmpty
         case .sweep: complete = groups == w && idle
         case .wipe: complete = groups == w + h - 1 && idle
-        default: complete = step >= Effect.bands - 1 + Effect.slideSteps
+        case .slide: complete = step >= Effect.slideLast
+        case .decrypt: complete = groups == Effect.syms
+        case .smoke: complete = head == order.count && idle
+        case .pour, .rain: complete = head == order.count && drops.isEmpty
+        case .vhstape: complete = groups == lines.count
+        case .disabled: complete = true
         }
         if complete { return false }
         step += 1
@@ -227,60 +274,13 @@ final class Effect {
         case .burn: burn()
         case .sweep: sweep()
         case .wipe: wipe()
-        default: break
+        case .slide: slide()
+        case .decrypt: decrypt()
+        case .smoke: flood()
+        case .pour, .rain: fall()
+        case .vhstape: vhstape()
+        case .disabled: break
         }
         return true
-    }
-
-    private func burn() {
-        let w = Effect.gridW
-        // remove the smoke from the cells
-        for s in smoke {
-            let cell = s.y * w + s.x
-            let code = base(cell)
-            disp[cell] = code
-        }
-        runActive()
-        // new cells start to burn
-        let perStep = (order.count + Effect.igniteSteps - 1) / Effect.igniteSteps
-        let rate = min(perStep * (2 + rng.below(3)) / 3, order.count - head)
-        for _ in 0..<rate {
-            start(Int(order[head]))
-            head += 1
-        }
-        // the smoke rises
-        var i = 0
-        while i < smoke.count {
-            smoke[i].age += 1
-            smoke[i].y -= 1
-            smoke[i].x += rng.below(3) - 1
-            let s = smoke[i]
-            let shade = s.age * 8 / Effect.smokeSteps
-            if shade >= 8 || s.y < 0 || s.x < 0 || s.x >= w {
-                smoke[i] = smoke[smoke.count - 1]
-                smoke.removeLast()
-                continue
-            }
-            disp[s.y * w + s.x] = Effect.smokeColors[shade]
-            i += 1
-        }
-    }
-
-    private func sweep() {
-        let w = Effect.gridW
-        runActive()
-        for group in easedGroups(w, steps: Effect.sweepSteps) {
-            // from left to right
-            for y in 0..<Effect.gridH { start(y * w + group) }
-        }
-    }
-
-    private func wipe() {
-        let w = Effect.gridW, h = Effect.gridH
-        runActive()
-        for d in easedGroups(w + h - 1, steps: Effect.wipeSteps) {
-            // the diagonal x + y = d
-            for x in max(0, d - (h - 1))...min(d, w - 1) { start((d - x) * w + x) }
-        }
     }
 }
