@@ -299,7 +299,7 @@ Manual (macOS):
 - Spaces, full-screen app, Mission Control.
 - Battery unplug (no pause), Low Power Mode (pause).
 - macOS desktop picture: follows `img` and `clear`, each Space after a visit, lock screen.
-- Transitions: each kind, image ↔ colour, pixel art ↔ other image, two screens, `pause` during a transition.
+- Transitions: each kind, image ↔ colour, pixel art ↔ other image, two screens, `pause` during a transition, `img` and `clear` during a transition (ignored, exit code 0).
 - Measure with `top -pid`, `footprint`, `sudo powermetrics --samplers tasks`.
 
 ## 15. Open points
@@ -358,6 +358,6 @@ Composition (the window server does all scaling and mixing; macpixel writes no w
 
 Rules:
 
-- One transition at a time. A new `img` or `clear`, and each display change (§10), ends the current transition at once.
+- One transition at a time. During a transition, the daemon ignores `img` and `clear`: the reply is `{"ok":true}`, the state does not change, and no decode and no new transition start. A request with a bad argument still gets its error. The daemon does the check at the request and again after the decode. Each display change (§10) ends the current transition at once.
 - A transition does not pause. It ends at once when a pause reason (§9) is active for all its screens, and it does not start in that condition. Thus a paused daemon has no wakeups.
 - A screen whose wallpaper did not change has no transition.

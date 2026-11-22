@@ -143,8 +143,10 @@ final class Daemon {
                 return reply(.err("bad argument"))
             }
             let path = a[1]
+            if transition != nil { return reply(.ok()) }  // ignored during a transition (SPEC §17)
             load(path) { [self] err in
                 if let err { return reply(.err(Daemon.message(err))) }
+                if transition != nil { return reply(.ok()) }  // it started during the decode
                 set(key, .img(path), fx)
                 reply(.ok())
             }
@@ -152,6 +154,7 @@ final class Daemon {
             guard let key = Daemon.targetKey(a[2]), let c = Target.parseColor(a[1]), let fx = fxKind(a[3]) else {
                 return reply(.err("bad argument"))
             }
+            if transition != nil { return reply(.ok()) }
             set(key, .color(c), fx)
             reply(.ok())
         case ("query", 1): reply(.ok(["screens": query()]))
@@ -232,7 +235,7 @@ final class Daemon {
     }
 
     /// Show the target of each screen. Release players without layers.
-    /// `fx`: show the change with this transition (SPEC §17). A transition that runs ends first.
+    /// `fx`: show the change with this transition (SPEC §17). A restore ends a transition that runs.
     private func apply(fx: FxKind = .disabled) {
         transition?.end()
         let t = Transition(fx)

@@ -157,7 +157,7 @@ The first use of an image takes a moment, because macpixel decodes it and writes
 macpixel img forest.gif --fx wipe      # for this change only
 ```
 
-The `transition` key of the config file sets the default. `--fx` has priority. Animations play during a transition. There is no transition while the wallpaper is paused or not visible.
+The `transition` key of the config file sets the default. `--fx` has priority. Animations play during a transition. During a transition, `img` and `clear` have no effect. There is no transition while the wallpaper is paused or not visible.
 
 ## More than one screen
 
