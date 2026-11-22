@@ -61,7 +61,10 @@ final class ScreensTests: XCTestCase {
             for x in 0..<sw {
                 // Row 0 is the top row in both buffers. `at.y` is from the bottom.
                 let ax = (x - at.x) / at.k, ay = (y - (sh - h * at.k - at.y)) / at.k
-                for c in 0..<3 where out[(y * sw + x) * 4 + c] != f[(ay * w + ax) * 4 + c] {
+                // The indexes are typed constants: one long expression is too slow to type-check.
+                let o: Int = (y * sw + x) * 4
+                let i: Int = (ay * w + ax) * 4
+                for c in 0..<3 where out[o + c] != f[i + c] {
                     return XCTFail("pixel \(x),\(y) differs")
                 }
             }

@@ -17,18 +17,18 @@ jobs:
         runner: [macos-14, macos-15]
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: swift test
 
   build:
     needs: test
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # macos-15 is an Apple silicon runner: the binary is arm64 only
       - run: swift build -c release
       - run: cp .build/release/macpixel macpixel-arm64-macos && lipo -info macpixel-arm64-macos
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macpixel-arm64-macos
           path: macpixel-arm64-macos
