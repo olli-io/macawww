@@ -221,10 +221,8 @@ Then restore the invariant (§8) for each player that changed.
 
 ## 11. State and config
 
-Dir: `~/Library/Application Support/macpixel/`.
-
-- `state`: one line per target, `<id|all> img <path>` or `<id|all> color <hex>`. Written on each change (temp file + rename). Read at daemon start.
-- `config` (optional, `key = value`):
+- `~/Library/Application Support/macpixel/state`: one line per target, `<id|all> img <path>` or `<id|all> color <hex>`. Written on each change (temp file + rename). Read at daemon start.
+- `~/.config/macpixel/config` (optional, `key = value`):
   - `max_cache_mb` (int, default `512`)
   - `transition` (`burn`, `sweep`, `slide`, `wipe`, `decrypt`, `pour`, `smoke`, `vhstape`, `rain` or `disabled`, default `burn`; see §17)
 

@@ -5,9 +5,13 @@ struct Config {
     var maxCacheMB = 512
     var transition = FxKind.burn
 
+    static var url: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/macpixel/config")
+    }
+
     static func load() -> Config {
         var c = Config()
-        let url = Daemon.supportDir.appendingPathComponent("config")
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return c }
         for line in text.split(separator: "\n") {
             let kv = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }

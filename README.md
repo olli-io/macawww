@@ -238,8 +238,8 @@ macpixel also sets the built-in macOS desktop picture to your wallpaper. This is
 
 | Path | Contents |
 |---|---|
+| `~/.config/macpixel/config` | Optional configuration. |
 | `~/Library/Application Support/macpixel/state` | The wallpaper of each screen. The daemon reads it at start. |
-| `~/Library/Application Support/macpixel/config` | Optional configuration. |
 | `~/Library/Caches/macpixel/` | Decoded images, and the pictures that macOS uses as desktop picture. If you delete them, set the wallpaper again. |
 | `~/Library/LaunchAgents/io.macpixel.daemon.plist` | The launch agent that `install` writes. |
 | `~/Library/Logs/macpixel.log` | The log of the daemon when the launch agent starts it. |
