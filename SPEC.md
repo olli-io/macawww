@@ -81,7 +81,7 @@ One window per screen:
 - Level `CGWindowLevelForKey(.desktopWindow)`. Desktop icons stay above.
 - `ignoresMouseEvents = true`, `isOpaque = true`, `hasShadow = false`.
 - `collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]`.
-- Content view is layer-hosting. The root layer is black and has `masksToBounds = true`. It has one image sublayer:
+- Content view is layer-hosting. The root layer is black and has `masksToBounds = true`. It has one image sublayer (and the bar of §18, when the config sets it):
   - `frame` = the root bounds, `contentsGravity = .resizeAspectFill` (see "Integer scale" for pixel art)
   - `magnificationFilter = .nearest`, `minificationFilter = .linear`
   - `contents` = the `Player`'s front IOSurface.
@@ -225,6 +225,7 @@ Then restore the invariant (§8) for each player that changed.
 - `~/.config/macpixel/config` (optional, `key = value`):
   - `max_cache_mb` (int, default `512`)
   - `transition` (`burn`, `sweep`, `slide`, `wipe`, `decrypt`, `pour`, `smoke`, `vhstape`, `rain` or `disabled`, default `burn`; see §17)
+  - `menu_bar_color` (`#RRGGBB` or `RRGGBB`, default: not set; see §18)
 
 The daemon reads `config` one time, at start.
 
@@ -287,6 +288,7 @@ Unit:
 - Integer upscale: factor, block check, point sample, decode restart with a smaller factor.
 - `check`: factor of a PNG, factor over all frames, list of a directory, exit code.
 - Integer scale per screen: k for exact fit, for cut, and for art larger than the screen.
+- Menu bar height: with a menu bar, without a menu bar.
 - Still PNG for the macOS desktop picture: size, scale and cut are equal to the layer.
 - Double-buffer invariant over 3 loops, including 1, 2 and 3 frame animations.
 - Transitions: gradients, burn order, flood order, tile order, start and end of each kind, grid pixels, pieces, slide timing, grey, grid placement.
@@ -297,6 +299,7 @@ Manual (macOS):
 - Spaces, full-screen app, Mission Control.
 - Battery unplug (no pause), Low Power Mode (pause).
 - macOS desktop picture: follows `img` and `clear`, each Space after a visit, lock screen.
+- Menu bar colour: with and without `menu_bar_color`, during a transition, automatic hide of the menu bar on and off, a screen without a menu bar.
 - Transitions: each kind, image ↔ colour, pixel art ↔ other image, two screens, `pause` during a transition, `img` and `clear` during a transition (ignored, exit code 0).
 - Measure with `top -pid`, `footprint`, `sudo powermetrics --samplers tasks`.
 
@@ -359,3 +362,14 @@ Rules:
 - One transition at a time. During a transition, the daemon ignores `img` and `clear`: the reply is `{"ok":true}`, the state does not change, and no decode and no new transition start. A request with a bad argument still gets its error. The daemon does the check at the request and again after the decode. Each display change (§10) ends the current transition at once.
 - A transition does not pause. It ends at once when a pause reason (§9) is active for all its screens, and it does not start in that condition. Thus a paused daemon has no wakeups.
 - A screen whose wallpaper did not change has no transition.
+
+## 18. Menu bar colour
+
+The macOS menu bar shows the wallpaper window through its background. With the config key `menu_bar_color` (§11), the menu bar has one static colour instead. Without the key, there is no bar layer and no other effect.
+
+- Each wallpaper window gets one more sublayer of the root layer: the bar. It has the colour as its `backgroundColor` (sRGB) and no contents.
+- Frame: the full width of the screen, at the top. Height = `screen.frame.maxY − screen.visibleFrame.maxY` in points, never less than 0. Thus a screen that shows no menu bar (automatic hide, or a second screen without its own menu bar) has a bar of height 0.
+- `zPosition = 1`: the bar is above the image layer and above the temporary layers of a transition (§17). A transition does not change the bar.
+- The height is calculated at each reconcile (§10). A change of the height causes a new layout of the screen, as a change of the frame does. Never poll.
+- The bar is not in the macOS desktop picture (§16). It exists only while the daemon runs.
+- Cost: one solid-colour layer. No surface, no timer, nothing on the tick path.

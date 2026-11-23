@@ -252,6 +252,7 @@ The `config` file has one `key = value` pair on each line. Restart the daemon af
 |---|---|---|
 | `max_cache_mb` | `512` | Maximum size of the cache directory in MB. macpixel deletes the files that were used least recently. |
 | `transition` | `burn` | The transition of `img` and `clear`: `burn`, `sweep`, `slide`, `wipe`, `decrypt`, `pour`, `smoke`, `vhstape`, `rain` or `disabled`. |
+| `menu_bar_color` | not set | A colour as `#RRGGBB`. macpixel shows a bar of this colour behind the macOS menu bar, so the menu bar has a static colour and does not show the wallpaper. Without this key, the menu bar shows the wallpaper. |
 
 ## Problems
 

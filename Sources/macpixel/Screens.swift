@@ -6,6 +6,10 @@ final class Screen {
     let window: NSWindow
     /// Shows the image or the colour. A sublayer of the root layer of the window.
     let layer: CALayer
+    /// Solid colour below the menu bar (SPEC §18). nil when the config has no `menu_bar_color`.
+    let bar: CALayer?
+    /// Height of the menu bar in points. 0 when the screen shows no menu bar.
+    var barHeight: CGFloat = 0
     /// Backing pixels for each point.
     var scale: CGFloat
     var player: Player?
@@ -16,10 +20,11 @@ final class Screen {
         return (Int((size.width * scale).rounded()), Int((size.height * scale).rounded()))
     }
 
-    init(id: CGDirectDisplayID, window: NSWindow, layer: CALayer, scale: CGFloat) {
+    init(id: CGDirectDisplayID, window: NSWindow, layer: CALayer, bar: CALayer?, scale: CGFloat) {
         self.id = id
         self.window = window
         self.layer = layer
+        self.bar = bar
         self.scale = scale
     }
 }
@@ -27,6 +32,8 @@ final class Screen {
 /// Window per screen and reconcile on display changes (SPEC §5, §10). Main thread only.
 final class Screens {
     private(set) var all: [CGDirectDisplayID: Screen] = [:]
+    /// Colour of the menu bar background (SPEC §18). Set it before `start`.
+    var barColor: UInt32?
     /// Called after each reconcile.
     var onChange: () -> Void = {}
     /// Called after the image, the colour, the frame or the scale of a screen changed.
@@ -63,13 +70,18 @@ final class Screens {
         for s in NSScreen.screens {
             guard let id = Screens.displayID(s) else { continue }
             seen.insert(id)
+            let bar = Screens.barHeight(frame: s.frame, visible: s.visibleFrame)
             if let e = all[id] {
-                guard e.window.frame != s.frame || e.scale != s.backingScaleFactor else { continue }
+                guard e.window.frame != s.frame || e.scale != s.backingScaleFactor || e.barHeight != bar else {
+                    continue
+                }
                 e.window.setFrame(s.frame, display: false)
                 e.scale = s.backingScaleFactor
+                e.barHeight = bar
                 layout(e)
             } else {
                 let e = make(id, s.frame, s.backingScaleFactor)
+                e.barHeight = bar
                 all[id] = e
                 layout(e)
             }
@@ -131,6 +143,11 @@ final class Screens {
         return (k, (screen.w - art.w * k) / 2, (screen.h - art.h * k) / 2)
     }
 
+    /// Height of the menu bar: the part of the screen above the visible frame. Never less than 0.
+    static func barHeight(frame: CGRect, visible: CGRect) -> CGFloat {
+        max(0, frame.maxY - visible.maxY)
+    }
+
     /// Sets the frame of the image layer. Each screen has its own pixel size, thus its own k.
     private func layout(_ s: Screen) {
         var frame = CGRect(origin: .zero, size: s.window.frame.size)
@@ -146,6 +163,9 @@ final class Screens {
         CATransaction.setDisableActions(true)
         s.layer.frame = frame
         s.layer.contentsGravity = gravity
+        // The origin is at the bottom left: the bar is at the top.
+        let size = s.window.frame.size
+        s.bar?.frame = CGRect(x: 0, y: size.height - s.barHeight, width: size.width, height: s.barHeight)
         CATransaction.commit()
         onLayout(s)
     }
@@ -173,12 +193,22 @@ final class Screens {
         layer.actions = ["contents": NSNull(), "backgroundColor": NSNull(), "bounds": NSNull(),
                          "position": NSNull()]
         root.addSublayer(layer)
+        var bar: CALayer?
+        if let c = barColor {
+            let b = CALayer()
+            b.backgroundColor = CGColor(srgbRed: CGFloat(c >> 16 & 0xFF) / 255, green: CGFloat(c >> 8 & 0xFF) / 255,
+                                        blue: CGFloat(c & 0xFF) / 255, alpha: 1)
+            b.zPosition = 1  // above the layers of a transition
+            b.actions = ["bounds": NSNull(), "position": NSNull()]
+            root.addSublayer(b)
+            bar = b
+        }
         // Layer-hosting view: set the layer before wantsLayer. AppKit does not draw into it.
         let v = NSView(frame: NSRect(origin: .zero, size: frame.size))
         v.layer = root
         v.wantsLayer = true
         w.contentView = v
         w.orderFront(nil)
-        return Screen(id: id, window: w, layer: layer, scale: scale)
+        return Screen(id: id, window: w, layer: layer, bar: bar, scale: scale)
     }
 }

@@ -4,6 +4,8 @@ import Foundation
 struct Config {
     var maxCacheMB = 512
     var transition = FxKind.burn
+    /// Colour of the bar below the menu bar (SPEC §18). nil: no bar.
+    var menuBarColor: UInt32?
 
     static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -21,6 +23,10 @@ struct Config {
             case "transition":
                 if let k = FxKind(rawValue: kv[1]) { c.transition = k } else {
                     logger.warning("config: bad transition \(kv[1], privacy: .public)")
+                }
+            case "menu_bar_color":
+                if let v = Target.parseColor(kv[1]) { c.menuBarColor = v } else {
+                    logger.warning("config: bad menu_bar_color \(kv[1], privacy: .public)")
                 }
             default: logger.warning("config: unknown key \(kv[0], privacy: .public)")
             }

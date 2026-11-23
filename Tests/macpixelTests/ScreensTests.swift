@@ -27,6 +27,17 @@ final class ScreensTests: XCTestCase {
         XCTAssertEqual(a.y, -960)
     }
 
+    func testBarHeight() {
+        let frame = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        // Menu bar of 38 points, Dock of 70 points.
+        XCTAssertEqual(Screens.barHeight(frame: frame, visible: CGRect(x: 0, y: 70, width: 1512, height: 874)), 38)
+        // No menu bar on this screen.
+        XCTAssertEqual(Screens.barHeight(frame: frame, visible: frame), 0)
+        // A second screen above the main screen.
+        let top = CGRect(x: 0, y: 982, width: 1920, height: 1080)
+        XCTAssertEqual(Screens.barHeight(frame: top, visible: CGRect(x: 0, y: 982, width: 1920, height: 1055)), 25)
+    }
+
     func testPlacement() {
         let a = Screens.placement(art: (480, 270), screen: (2940, 1912))
         XCTAssertEqual(a.k, 8)

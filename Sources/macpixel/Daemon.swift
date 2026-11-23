@@ -123,6 +123,7 @@ final class Daemon {
         power.onChange = { [self] in updatePause() }
         screens.onChange = { [self] in displaysChanged() }
         screens.onLayout = { [self] in wallpaper.sync($0) }
+        screens.barColor = config.menuBarColor
         wallpaper.start()
         power.start()
         screens.start()
