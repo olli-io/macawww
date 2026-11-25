@@ -8,6 +8,13 @@ struct Config {
     var screensaver: String?
     /// The colour of the strip behind the menu bar (SPEC §5). nil: no strip.
     var menubar: UInt32?
+    /// Rotations (SPEC §19): seconds between two files, random order, transitions.
+    var rotateInterval = 300
+    var randomOrder = false
+    /// nil: the `transition` key.
+    var rotateTransition: [FxKind]?
+    var rotateKinds: [FxKind] { rotateTransition ?? [transition] }
+    static let minInterval = 10
 
     static var url: URL { Paths.home.appendingPathComponent(".config/macpixel/config") }
 
@@ -31,6 +38,18 @@ struct Config {
             case "menubar":
                 if kv[1].isEmpty { c.menubar = nil } else if let rgb = Target.parseColor(kv[1]) { c.menubar = rgb } else {
                     logger.warning("config: bad menubar \(kv[1], privacy: .public)")
+                }
+            case "rotate_interval":
+                if let n = Int(kv[1]), n >= minInterval { c.rotateInterval = n } else {
+                    logger.warning("config: bad rotate_interval \(kv[1], privacy: .public)")
+                }
+            case "random_order":
+                if let b = Bool(kv[1]) { c.randomOrder = b } else {
+                    logger.warning("config: bad random_order \(kv[1], privacy: .public)")
+                }
+            case "rotate_transition":
+                if let k = FxKind.list(kv[1]) { c.rotateTransition = k } else {
+                    logger.warning("config: bad rotate_transition \(kv[1], privacy: .public)")
                 }
             default: logger.warning("config: unknown key \(kv[0], privacy: .public)")
             }

@@ -3,6 +3,8 @@ import Foundation
 enum Target: Equatable {
     case img(String)
     case color(UInt32)
+    /// A rotation through the pixel art of a directory (SPEC §19).
+    case dir(String)
 
     /// `#RRGGBB` or `RRGGBB`.
     static func parseColor(_ s: String) -> UInt32? {
@@ -15,11 +17,13 @@ enum Target: Equatable {
         switch self {
         case .img(let p): return "img \(p)"
         case .color(let c): return "color " + String(format: "#%06X", c)
+        case .dir(let p): return "dir \(p)"
         }
     }
 }
 
-/// The state file (SPEC §11): one line per target, `<id|all> img <path>` or `<id|all> color <hex>`.
+/// The state file (SPEC §11): one line per target, `<id|all> img <path>`, `<id|all> dir <path>`
+/// or `<id|all> color <hex>`.
 enum State {
     static var url: URL { Paths.supportDir.appendingPathComponent("state") }
 
@@ -35,6 +39,8 @@ enum State {
             guard f.count == 3, let key = key(f[0]) else { continue }
             if f[1] == "img" {
                 s[key] = .img(f[2])
+            } else if f[1] == "dir" {
+                s[key] = .dir(f[2])
             } else if f[1] == "color", let c = Target.parseColor(f[2]) {
                 s[key] = .color(c)
             }

@@ -10,7 +10,7 @@ Goal: the lowest CPU, RAM and power use for an animated wallpaper.
 
 Non-goals (v1):
 - GUI or menu bar item.
-- Playlists, slideshows. Transitions other than those of §17.
+- Playlists. Slideshows other than the rotation of §19. Transitions other than those of §17.
 - Video input (see §15).
 - App bundle. macpixel is one CLI binary. The one exception is the optional screensaver bundle (§18).
 
@@ -33,7 +33,7 @@ One Swift binary with two roles:
 
 IPC: Unix domain socket at `$TMPDIR/macpixel.sock` (`NSTemporaryDirectory()`, mode 0600). Protocol: JSON Lines. One connection per command: the client sends one line, the daemon sends one line, then closes. JSON escapes all control characters, so paths with spaces, tabs or newlines are safe.
 
-- Request: JSON array of strings, the subcommand and its arguments. `["img","/path/a b.gif","all","config"]`, `["clear","000000","all","wipe"]`, `["query"]`, `["pause"]`, `["resume"]`, `["kill"]`.
+- Request: JSON array of strings, the subcommand and its arguments. `["img","/path/a b.gif","all","config"]`, `["rotate","/path/art","all"]`, `["clear","000000","all","wipe"]`, `["query"]`, `["pause"]`, `["resume"]`, `["kill"]`.
   The last argument of `img` and `clear` is the transition name of §17, or `config`.
 - Reply: JSON object. `{"ok":true}` or `{"ok":false,"error":"<message>"}`.
 - `query` reply: `{"ok":true,"screens":[{"id":1,"width":3840,"height":2160,"file":"/a.gif","state":"paused","reasons":["occluded"]}]}`. A screen has `file` or `color` (`"#RRGGBB"`). `state` is `playing`, `paused`, `static` or `stopped` (loop count done). `reasons` is present only when `paused`.
@@ -59,6 +59,7 @@ One `Player` per distinct file. All screens that show the same file share one `P
 | `macpixel img <path> [--screen <id\|all>] [--fx <name>]` | Set wallpaper. Default `all`. `--fx`: see §17. |
 | `macpixel img <dir> [--screen <id\|all>] [--fx <name>]` | Show a list of the images in `<dir>`. Set the selected one. |
 | `macpixel <dir> [--screen <id\|all>] [--fx <name>]` | Short form of `img <dir>`. A command name has priority over a directory with the same name. |
+| `macpixel rotate <dir> [--screen <id\|all>]` | Rotation through the pixel art of `<dir>` (§19). The client sends the absolute path. Not a directory: exit 2. |
 | `macpixel clear [--color <hex>] [--screen ...] [--fx ...]` | Solid colour. Default `#000000`. |
 | `macpixel check [<dir>]` | One line for each image of the directory that is not pixel art (N = 1, §6 step 5) or that fails to decode: `<path>: <reason>`. Default: the current directory. Not recursive. A file path checks that file only. The files are those of the file list below. The client does this (`Check.swift`), without the daemon and without a cache file. Exit code 1 when a line is printed. |
 | `macpixel query` | Print screens, size, file, state (playing/paused + reason). |
@@ -70,7 +71,7 @@ One `Player` per distinct file. All screens that show the same file share one `P
 
 Exit codes: 0 = ok, 1 = error or cancel, 2 = usage error, 3 = daemon not running.
 
-File list (`Picker.swift`): the files in `<dir>` with the extension `.gif`, `.png`, `.jpg` or `.jpeg` (case ignored), in Finder name order. Hidden files and subdirectories are not shown. Keys: up/down or `k`/`j` move, Enter sets the wallpaper, `q`, Esc or Ctrl-C cancel (exit 1). Keys come from stdin and the list goes to stderr, so both must be a terminal. The list scrolls when it is longer than the terminal. The client checks for the daemon before it shows the list.
+File list (`Folder.swift`, shown by `Picker.swift`): the files in `<dir>` with the extension `.gif`, `.png`, `.jpg` or `.jpeg` (case ignored), in Finder name order. Hidden files and subdirectories are not shown. Keys: up/down or `k`/`j` move, Enter sets the wallpaper, `q`, Esc or Ctrl-C cancel (exit 1). Keys come from stdin and the list goes to stderr, so both must be a terminal. The list scrolls when it is longer than the terminal. The client checks for the daemon before it shows the list.
 
 `--screen all` replaces all per-screen states. `macpixel daemon` when a daemon already runs: message, exit 0 (so launchd does not restart it).
 
@@ -118,7 +119,7 @@ Input formats: all formats that ImageIO reads. Multi-frame GIF, APNG and WebP an
 
 Max size: 16384 px per side (IOSurface limit). A still image that is larger is scaled down once at decode; a larger animation is an error. Still images use `CGImageSourceCreateThumbnailAtIndex` with `kCGImageSourceCreateThumbnailWithTransform`, so the EXIF orientation applies.
 
-The daemon does not decode. On a cache miss it starts `macpixel decode <src> <dst>` (the same binary, an internal command, see `Child.swift`) as a child process, waits for it on the background queue, then maps the cache file. All decode memory (ImageIO, frame buffers, malloc caches) goes away with the child. The child writes its error text to stderr and exits with status 1; the daemon puts that text in the `err` reply.
+The daemon does not decode. On a cache miss it starts `macpixel decode <src> <dst> [--pixel-art]` (the same binary, an internal command, see `Child.swift`) as a child process, waits for it on the background queue, then maps the cache file. All decode memory (ImageIO, frame buffers, malloc caches) goes away with the child. The child writes its error text to stderr and exits with status 1; the daemon puts that text in the `err` reply.
 
 Steps (step 1 in the daemon on the background queue, the others in the child; one frame in memory at a time, plus the previous frame, plus one source-size frame when step 5 finds an upscale):
 1. Hash the file bytes (SHA-256, CryptoKit). If a valid cache file exists, skip to §8.
@@ -126,6 +127,7 @@ Steps (step 1 in the daemon on the background queue, the others in the child; on
 3. Clamp: a delay < 20 ms becomes 100 ms (browser behaviour).
 4. For each frame: `CGImageSourceCreateImageAtIndex` gives the composited frame. Draw it into a BGRA premultiplied buffer of the source size.
 5. Integer upscale: N = the GCD of all run lengths of equal pixels along the rows and columns of frame 0. If N > 1, store one pixel per N×N block; all later steps use the small frame. Check each later frame against N. If a frame fails, calculate the smaller N (a divisor of the old N) and start the decode again. If N = 1, there is no extra buffer and no extra copy.
+   With `--pixel-art` (a rotation, §19): when N = 1, stop with the error `the image is not pixel art` and write no cache file. A valid cache file without the `pixelArt` flag gives the same error.
 6. Compare with the previous frame in 32×32 tiles (`memcmp` per tile row). Mark changed tiles.
 7. Merge changed tiles into at most 8 rects (row runs, then vertical merge, then bounding-box merge of the smallest pairs until ≤ 8).
 8. If the dirty area > 50 % of the frame, store one full-frame rect.
@@ -230,12 +232,15 @@ Then restore the invariant (§8) for each player that changed.
 
 ## 11. State and config
 
-- `~/Library/Application Support/macpixel/state`: one line per target, `<id|all> img <path>` or `<id|all> color <hex>`. Written on each change (temp file + rename). Read at daemon start.
+- `~/Library/Application Support/macpixel/state`: one line per target, `<id|all> img <path>`, `<id|all> dir <path>` (a rotation, §19) or `<id|all> color <hex>`. Written on each change (temp file + rename). Read at daemon start.
 - `~/.config/macpixel/config` (optional, `key = value`):
   - `max_cache_mb` (int, default `512`)
   - `transition` (`burn`, `sweep`, `slide`, `wipe`, `decrypt`, `pour`, `smoke`, `vhstape`, `rain` or `disabled`, default `burn`; see §17)
-  - `screensaver` (path of an image, no default; `~/` is the home directory; see §18)
+  - `screensaver` (path of an image or of a directory, no default; `~/` is the home directory; see §18)
   - `menubar` (colour `RRGGBB` or `#RRGGBB`, no default; the strip behind the menu bar, see §5)
+  - `rotate_interval` (seconds between two files of a rotation, integer ≥ 10, default `300`; see §19)
+  - `random_order` (`true` or `false`, default `false`; see §19)
+  - `rotate_transition` (the transitions of a rotation: one name of §17, `random`, or a list `burn, wipe, rain` (brackets optional); default: the `transition` key; see §19)
 
 The daemon reads `config` one time, at start. The screensaver reads `config` and `state` each time it starts.
 
@@ -265,14 +270,17 @@ The daemon reads `config` one time, at start. The screensaver reads `config` and
 Package.swift
 Sources/macpixel/
   main.swift          CLI parse, dispatch
-  Daemon.swift        app setup, socket server, state file
+  Daemon.swift        app setup, commands, state file
+  Server.swift        socket server
   Config.swift        config file
   Paths.swift         directories, home directory of the user
   State.swift         targets, state file format
   Log.swift           the logger
   Layout.swift        integer scale, frame of the image layer, layers of a view
   Client.swift        socket client
+  Folder.swift        the image files of a directory
   Picker.swift        file list for `img <dir>`
+  Rotation.swift      rotation through a directory, the clock of the rotations
   Screens.swift       window per screen, reconcile
   Decoder.swift       ImageIO → frame encoder → cache writer
   Diff.swift          tile diff, rect merge
@@ -312,7 +320,8 @@ Unit:
 - Still PNG for the macOS desktop picture: size, scale and cut are equal to the layer, menu bar strip.
 - Double-buffer invariant over 3 loops, including 1, 2 and 3 frame animations.
 - Transitions: gradients, burn order, flood order, tile order, start and end of each kind, grid pixels, pieces, slide timing, grey, grid placement.
-- State file parse, target of a display, config parse with the `screensaver` and `menubar` keys, frame of the image layer.
+- State file parse (with `dir`), target of a display, config parse with the `screensaver`, `menubar` and rotation keys, frame of the image layer.
+- Rotation: Finder order and wrap, skip of files that are not pixel art, no pixel art, random pass (each file one time, no file two times in a row), new files, transition list, decode with `--pixel-art` (error, no cache file).
 
 Manual (macOS):
 - Hotplug, resolution change, mirror on/off.
@@ -322,7 +331,8 @@ Manual (macOS):
 - macOS desktop picture: follows `img` and `clear`, each Space after a visit, lock screen.
 - Menu bar strip: colour and height on a screen with a notch and on a screen without, during a transition, hidden menu bar.
 - Transitions: each kind, image ↔ colour, pixel art ↔ other image, two screens, `pause` during a transition, `img` and `clear` during a transition (ignored, exit code 0).
-- Screensaver (§18): preview in System Settings, each screen shows its wallpaper, a colour, the `screensaver` key (image in the cache, image not in the cache, bad path), no `legacyScreenSaver` process after the stop.
+- Screensaver (§18): preview in System Settings, each screen shows its wallpaper, a colour, the `screensaver` key (image in the cache, image not in the cache, bad path, directory), a `dir` target, no `legacyScreenSaver` process after the stop.
+- Rotation (§19): steps with each transition kind, `random`, a list; two screens with one directory, two screens with two directories; `pause`, lock and sleep (the clock stops, no wakeups); a file that is not pixel art; `img` on one screen during a rotation on the other.
 - Measure with `top -pid`, `footprint`, `sudo powermetrics --samplers tasks`.
 
 ## 15. Open points
@@ -382,7 +392,7 @@ Composition (the window server does all scaling and mixing; macpixel writes no w
 
 Rules:
 
-- One transition at a time. During a transition, the daemon ignores `img` and `clear`: the reply is `{"ok":true}`, the state does not change, and no decode and no new transition start. A request with a bad argument still gets its error. The daemon does the check at the request and again after the decode. Each display change (§10) ends the current transition at once.
+- One transition at a time. During a transition, the daemon ignores `img`, `rotate` and `clear`: the reply is `{"ok":true}`, the state does not change, and no decode and no new transition start. A request with a bad argument still gets its error. The daemon does the check at the request and again after the decode. Each display change (§10) ends the current transition at once.
 - A transition does not pause. It ends at once when a pause reason (§9) is active for all its screens, and it does not start in that condition. Thus a paused daemon has no wakeups.
 - A screen whose wallpaper did not change has no transition.
 
@@ -397,8 +407,8 @@ An optional bundle, `macpixel.saver`, shows the wallpaper as the macOS screensav
 - The screensaver does not start a child process, and it does not write into the cache of the daemon. The access time of a cache file does not change, so the eviction of §7 does not see the use. A file that the daemon deletes stays mapped.
 
 **Content of a view** (one view for each screen), the first that loads:
-1. The `screensaver` image of `config`, on all screens.
-2. The target of the screen in `state`: the line of its display ID, else the `all` line. An image or a colour.
+1. The `screensaver` image of `config`, on all screens. A directory is a rotation (§19).
+2. The target of the screen in `state`: the line of its display ID, else the `all` line. An image, a rotation or a colour.
 3. Black.
 
 **Load of an image** (background queue): SHA-256 of the file, then the first that is valid:
@@ -411,3 +421,17 @@ An optional bundle, `macpixel.saver`, shows the wallpaper as the macOS screensav
 **Stop:** macOS 14 and later do not destroy the views when the screensaver stops, and the host process continues. On the distributed notification `com.apple.screensaver.willstop` the view stops the player and, if it is not a preview, calls `exit(0)`. The observer exists only in a process with `legacyScreenSaver` in its name.
 
 There is no options sheet (§1: no GUI). The pause rules of §9 do not apply: macOS starts and stops the screensaver.
+
+## 19. Rotation
+
+A rotation shows the pixel art of one directory, one file at a time. The daemon and the screensaver both rotate. The code is in `Rotation.swift`, which the screensaver shares.
+
+- **Start:** `macpixel rotate <dir> [--screen <id|all>]`. The state line is `<id|all> dir <path>` (§11). The daemon loads the first file, then replies; the change has a transition from `rotate_transition`. No pixel art in the directory: reply `err` (`no pixel art in <dir>`), the state does not change. A restore (daemon start, new screen) starts a rotation from its first file, with no transition. The position in the directory is not stored.
+- **Files:** the files of the file list (§4) of the directory, not recursive. The directory is read again for each file, so new and removed files have an effect.
+- **Pixel art only:** the decode has `--pixel-art` (§6 step 5). An image that is not pixel art, or that does not load, is skipped and is not tried again while the process runs. The skip costs one frame-0 decode in the child and writes no cache file.
+- **Order:** `random_order = false`: Finder name order, from the first file after the current name; after the last file, the first file. `random_order = true`: a random pass that shows each file one time, then a new pass. A new pass does not start with the file on screen.
+- **Transition:** one of `rotate_transition` for each step, at random. A single name gives that name; `random` is all kinds but `disabled`.
+- **Clock:** one `DispatchSourceTimer` on the main queue for all rotations of a process, leeway 1 s. It fires once per `rotate_interval`. A step advances all rotations, loads their next files, then shows all changes with one transition. The interval starts again after the step. A rotation that cannot advance keeps its file.
+- **Pause:** the clock runs only when the pause reasons (§9) of the screens with a rotation are empty (occluded: all those screens). Paused: the timer is cancelled and the remaining time is kept. Thus a paused daemon has no wakeups.
+- **Transition rules (§17):** a step that comes during a transition waits for its end. Screens whose file did not change have no transition.
+- **Screensaver:** its own clock with the same keys, which runs while a view animates. Views that show the same directory share the rotation and one transition. Thus the screensaver adds the transition files (`Fx*.swift`, `Transition.swift`, `Tint.swift`) to its build.

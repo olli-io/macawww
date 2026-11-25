@@ -1,5 +1,17 @@
-import AppKit
 import IOSurface
+import QuartzCore
+
+/// A view that shows a wallpaper: a screen of the daemon or a view of the screensaver.
+protocol Canvas: AnyObject {
+    /// The image layer. Its superlayer is the root layer of the view.
+    var image: CALayer { get }
+    var player: Player? { get }
+    var color: UInt32? { get }
+    /// Size in backing pixels.
+    var pixelSize: (w: Int, h: Int) { get }
+    /// Backing pixels for each point.
+    var scale: CGFloat { get }
+}
 
 /// Shows one transition on the screens that one request changed (SPEC §17). Main thread only.
 ///
@@ -39,8 +51,6 @@ final class Transition {
     private var timer: DispatchSourceTimer?
     private var onEnd: () -> Void = {}
     private var ended = false
-    /// The windows that show this transition.
-    private(set) var windows: [(window: NSWindow, display: CGDirectDisplayID)] = []
 
     init?(_ kind: FxKind) {
         guard kind != .disabled else { return nil }
@@ -85,17 +95,17 @@ final class Transition {
 
     /// Call before `Screens.show`. Copies the look of the screen. The copy is a layer of
     /// the old player, so the old animation continues and `detach` does not stop it.
-    func before(_ s: Screen) {
-        let old = Transition.replica(s.layer)
+    func before(_ s: Canvas) {
+        let old = Transition.replica(s.image)
         s.player?.attach(old)
         pending = (old, s.player, s.color ?? 0)
     }
 
     /// Call after `Screens.show`. `changed`: the screen shows a different wallpaper now.
-    func after(_ s: Screen, changed: Bool) {
+    func after(_ s: Canvas, changed: Bool) {
         guard let (old, oldPlayer, oldColor) = pending else { return }
         pending = nil
-        guard changed, let root = s.layer.superlayer else {
+        guard changed, let root = s.image.superlayer else {
             oldPlayer?.detach(old)
             return
         }
@@ -116,7 +126,7 @@ final class Transition {
             let clip = CALayer()
             clip.masksToBounds = true
             clip.isHidden = true
-            let img = Transition.replica(tints.isEmpty ? s.layer : old)
+            let img = Transition.replica(tints.isEmpty ? s.image : old)
             if tints.isEmpty {
                 s.player?.attach(img)
             } else {
@@ -139,9 +149,8 @@ final class Transition {
         CATransaction.commit()
         parts.append(Part(box: box, old: old, oldPlayer: oldPlayer, newPlayer: s.player, pieces: pieces,
                           tints: tints, grid: grid, cell: cell, width: root.bounds.width,
-                          newHome: s.layer.frame.origin, oldHome: old.frame.origin))
+                          newHome: s.image.frame.origin, oldHome: old.frame.origin))
         shown.append([Piece](repeating: Piece(), count: pieces.count))
-        windows.append((s.window, s.id))
     }
 
     /// Starts the steps. Returns false when no screen changed. Calls `onEnd` one time, at the end.

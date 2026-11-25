@@ -4,9 +4,11 @@ import ScreenSaver
 /// The screensaver view (SPEC §18): one view per screen. It shows the wallpaper of its screen,
 /// or the `screensaver` image of the config file.
 @objc(MacpixelSaverView)
-final class MacpixelSaverView: ScreenSaverView {
-    private var image = CALayer()
+final class MacpixelSaverView: ScreenSaverView, Canvas {
+    private(set) var image = CALayer()
     private var content = SaverContent.none
+    /// The directory of the rotation that this view shows (SPEC §19).
+    private(set) var dir: String?
     private var active = false
     private var request = 0
     private var stopObserver: NSObjectProtocol?
@@ -35,9 +37,23 @@ final class MacpixelSaverView: ScreenSaverView {
         // The player has its own timer. `animateOneFrame` has no function here.
         animationTimeInterval = 3600
         observeStop()
+        SaverSource.register(self)
     }
 
     // MARK: Content
+
+    var player: Player? {
+        if case .player(let p) = content { return p }
+        return nil
+    }
+
+    var color: UInt32? {
+        if case .color(let c) = content { return c }
+        return nil
+    }
+
+    var scale: CGFloat { window?.backingScaleFactor ?? 2 }
+    var pixelSize: (w: Int, h: Int) { Layout.pixels(bounds.size, scale: scale) }
 
     private var displayID: UInt32? {
         (window?.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
@@ -46,15 +62,16 @@ final class MacpixelSaverView: ScreenSaverView {
     private func load() {
         request += 1
         let id = request
-        SaverSource.resolve(display: displayID) { [weak self] c in
+        SaverSource.resolve(display: displayID) { [weak self] c, dir in
             guard let self, id == self.request else { return }
-            self.show(c)
+            self.show(c, dir: dir)
         }
     }
 
-    private func show(_ new: SaverContent) {
+    func show(_ new: SaverContent, dir: String?) {
         if case .player(let p) = content { p.detach(image) }
         content = new
+        self.dir = dir
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         image.contents = nil
@@ -74,7 +91,6 @@ final class MacpixelSaverView: ScreenSaverView {
     private func place() {
         var art: (w: Int, h: Int)?
         if case .player(let p) = content, p.pixelArt, !isPreview { art = (p.width, p.height) }
-        let scale = window?.backingScaleFactor ?? 2
         let at = Layout.imageFrame(art: art, size: bounds.size, scale: scale)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -103,12 +119,14 @@ final class MacpixelSaverView: ScreenSaverView {
 
     override func startAnimation() {
         super.startAnimation()
+        if !active { SaverSource.setActive(true) }
         active = true
         if case .player(let p) = content { p.setRunning(true) }
     }
 
     override func stopAnimation() {
         super.stopAnimation()
+        if active { SaverSource.setActive(false) }
         active = false
         if case .player(let p) = content { p.setRunning(false) }
     }

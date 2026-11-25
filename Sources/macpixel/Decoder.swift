@@ -125,20 +125,31 @@ enum Decoder {
     }
 
     /// Returns a valid cache file for `path`. Decodes in a child process if needed.
+    /// `pixelArt`: throw `notPixelArt` for an image that is not pixel art (SPEC §19).
     /// Call on a background queue.
-    static func load(path: String) throws -> (hash: String, cache: CacheFile) {
+    static func load(path: String, pixelArt: Bool = false) throws -> (hash: String, cache: CacheFile) {
         let hash = try hash(path: path)
         let dst = Cache.url(hash: hash)
         if FileManager.default.fileExists(atPath: dst.path) {
-            if let c = try? CacheFile(url: dst) { return (hash, c) }
+            if let c = try? CacheFile(url: dst) { return (hash, try check(c, pixelArt: pixelArt)) }
             try? FileManager.default.removeItem(at: dst)
         }
         try FileManager.default.createDirectory(at: Cache.dir, withIntermediateDirectories: true)
-        if var text = Child.run(["decode", path, dst.path]) {
+        if var text = Child.run(["decode", path, dst.path] + (pixelArt ? [pixelArtFlag] : [])) {
+            if text == MCWError.notPixelArt.description { throw MCWError.notPixelArt }
             if text.hasPrefix("decode: ") { text.removeFirst(8) }  // the child prints an MCWError
             throw MCWError.decode(text)
         }
         return (hash, try CacheFile(url: dst))
+    }
+
+    /// The argument of the `decode` child for `pixelArt`.
+    static let pixelArtFlag = "--pixel-art"
+
+    /// `c`, or `notPixelArt` when the caller wants only pixel art and `c` is not.
+    static func check(_ c: CacheFile, pixelArt: Bool) throws -> CacheFile {
+        if pixelArt && !c.pixelArt { throw MCWError.notPixelArt }
+        return c
     }
 
     /// An image file, opened with ImageIO. `count` = the number of frames that macpixel shows.
@@ -175,7 +186,8 @@ enum Decoder {
         }
     }
 
-    static func decode(url: URL, to dst: URL) throws {
+    /// `pixelArt`: stop with `notPixelArt` when the integer upscale is 1. No cache file then.
+    static func decode(url: URL, to dst: URL, pixelArt: Bool = false) throws {
         let source = try Source(url: url)
         let src = source.src, animated = source.animated
         var first: CGImage? = try source.image(0)
@@ -196,6 +208,7 @@ enum Decoder {
         var n = Upscale.factor(probe, width: w, height: h)
 
         while true {
+            if pixelArt && n == 1 { throw MCWError.notPixelArt }
             if n == 1 {  // no upscale: draw straight into the encoder
                 stageCtx = nil
                 free(stage)

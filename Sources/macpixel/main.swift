@@ -6,6 +6,7 @@ usage: macpixel <command>
   img <path|dir> [--screen <id|all>] [--fx <name>]
                                                set wallpaper; a directory shows a file list
   <dir> [--screen <id|all>] [--fx <name>]      short form of img <dir>
+  rotate <dir> [--screen <id|all>]             rotate through the pixel art in dir
   clear [--color <hex>] [--screen <id|all>] [--fx <name>]
                                                solid colour (default #000000)
   check [<dir>]                                list the images that are not pixel art
@@ -15,7 +16,8 @@ usage: macpixel <command>
   install | uninstall                          start at login
 
 --fx is the transition: \(FxKind.names). The default is the
-`transition` key in the config file, or else burn.
+`transition` key in the config file, or else burn. The config keys
+rotate_interval, random_order and rotate_transition control rotate.
 """
 
 func usage() -> Never {
@@ -55,18 +57,13 @@ func fxArg(_ o: [String: String]) -> String {
     return name
 }
 
-func isDirectory(_ path: String) -> Bool {
-    var d: ObjCBool = false
-    return FileManager.default.fileExists(atPath: path, isDirectory: &d) && d.boolValue
-}
-
 /// `img <path|dir>`. For a directory, the user selects a file from a list (SPEC §4).
 func imgCommand(_ args: ArraySlice<String>) -> Never {
     let (pos, o) = parseArgs(args, options: ["screen", "fx"])
     guard pos.count == 1 else { usage() }
     let screen = screenArg(o), fx = fxArg(o)
     var url = URL(fileURLWithPath: pos[0]).standardizedFileURL
-    if isDirectory(url.path) {
+    if Folder.isDirectory(url.path) {
         guard Client.isRunning() else {
             eprint("daemon not running")
             exit(3)
@@ -87,11 +84,23 @@ case "daemon":
     Daemon.run()
 case "img":
     imgCommand(cliRest)
+case "rotate":
+    let (pos, o) = parseArgs(cliRest, options: ["screen"])
+    guard pos.count == 1 else { usage() }
+    let screen = screenArg(o)
+    let dir = URL(fileURLWithPath: pos[0]).standardizedFileURL.path
+    guard Folder.isDirectory(dir) else {
+        eprint("not a directory: \(dir)")
+        exit(2)
+    }
+    exit(Client.send(["rotate", dir, screen]))
 case "decode":
     // Internal: the daemon starts this as a child process (SPEC §6). Not in the usage text.
     let a = Array(cliRest)
-    guard a.count == 2 else { usage() }
-    Child.main { try Decoder.decode(url: URL(fileURLWithPath: a[0]), to: URL(fileURLWithPath: a[1])) }
+    guard a.count == 2 || (a.count == 3 && a[2] == Decoder.pixelArtFlag) else { usage() }
+    Child.main {
+        try Decoder.decode(url: URL(fileURLWithPath: a[0]), to: URL(fileURLWithPath: a[1]), pixelArt: a.count == 3)
+    }
 case "still":
     // Internal: one PNG of frame 0 for the macOS desktop picture (SPEC §16).
     let a = Array(cliRest)
@@ -131,6 +140,6 @@ case "help", "-h", "--help":
     exit(0)
 default:
     // Short form: `macpixel <dir>` = `macpixel img <dir>`.
-    guard isDirectory(cliCommand) else { usage() }
+    guard Folder.isDirectory(cliCommand) else { usage() }
     imgCommand(cliArgs)
 }

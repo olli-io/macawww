@@ -11,9 +11,12 @@ final class StateTests: XCTestCase {
             all
             8 video /bad/kind.mp4
             9 color nothex
+            10 dir /art/a dir
 
             """)
-        XCTAssertEqual(s, ["all": .img("/a/b c.gif"), "69734662": .color(0x1A2B3C), "7": .color(0)])
+        XCTAssertEqual(s, ["all": .img("/a/b c.gif"), "69734662": .color(0x1A2B3C), "7": .color(0),
+                           "10": .dir("/art/a dir")])
+        XCTAssertEqual(Target.dir("/a b").line, "dir /a b")
         XCTAssertEqual(State.parse(""), [:])
     }
 
@@ -43,5 +46,30 @@ final class StateTests: XCTestCase {
         XCTAssertEqual(Config.parse("menubar = 141617").menubar, 0x141617)
         XCTAssertEqual(Config.parse("menubar = #A0b1C2").menubar, 0xA0B1C2)
         XCTAssertNil(Config.parse("menubar = black").menubar)
+    }
+
+    func testConfigRotation() {
+        let d = Config.parse("transition = wipe")
+        XCTAssertEqual(d.rotateInterval, 300)
+        XCTAssertFalse(d.randomOrder)
+        XCTAssertEqual(d.rotateKinds, [.wipe])
+        let c = Config.parse("""
+            rotate_interval = 60
+            random_order = true
+            rotate_transition = burn, rain
+            """)
+        XCTAssertEqual(c.rotateInterval, 60)
+        XCTAssertTrue(c.randomOrder)
+        XCTAssertEqual(c.rotateKinds, [.burn, .rain])
+        XCTAssertEqual(Config.parse("rotate_transition = random").rotateKinds.count, FxKind.allCases.count - 1)
+        // Bad values keep the default.
+        let b = Config.parse("""
+            rotate_interval = 5
+            random_order = yes
+            rotate_transition = fire
+            """)
+        XCTAssertEqual(b.rotateInterval, 300)
+        XCTAssertFalse(b.randomOrder)
+        XCTAssertEqual(b.rotateKinds, [.burn])
     }
 }

@@ -1,50 +1,6 @@
 import AppKit
 import os
 
-/// Unix socket server on the main queue. One request line, one reply line per connection.
-final class Server {
-    private let fd: Int32
-    private let path: String
-    private let source: DispatchSourceRead
-
-    init?(path: String, handler: @escaping ([String], @escaping (Reply) -> Void) -> Void) {
-        unlink(path)
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { return nil }
-        guard withSockAddr(path, { bind(fd, $0, $1) }) == 0, chmod(path, 0o600) == 0, listen(fd, 8) == 0 else {
-            Darwin.close(fd)
-            return nil
-        }
-        self.fd = fd
-        self.path = path
-        source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
-        source.setEventHandler {
-            let c = accept(fd, nil, nil)
-            guard c >= 0 else { return }
-            var on: Int32 = 1
-            setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
-            var tv = timeval(tv_sec: 1, tv_usec: 0)
-            setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-            guard let line = sockReadLine(c) else { Darwin.close(c); return }
-            let respond = { (r: Reply) in
-                sockWrite(c, r.line)
-                Darwin.close(c)
-            }
-            guard let args = decodeJSONLine(line) as? [String], !args.isEmpty else {
-                return respond(.err("bad request"))
-            }
-            handler(args, respond)
-        }
-        source.resume()
-    }
-
-    func stop() {
-        source.cancel()
-        Darwin.close(fd)
-        unlink(path)
-    }
-}
-
 /// Daemon: state, players, commands (SPEC §3, §11). Main thread only.
 final class Daemon {
     private static var instance: Daemon?
@@ -56,6 +12,12 @@ final class Daemon {
     private var state: [String: Target] = [:]  // key: "all" or display ID
     private var players: [String: Player] = [:]  // key: path
     private var transition: Transition?
+    /// The windows that show `transition`.
+    private var fxWindows: [(window: NSWindow, display: CGDirectDisplayID)] = []
+    private lazy var rotator = Rotator(interval: config.rotateInterval, random: config.randomOrder,
+                                       kinds: config.rotateKinds)
+    /// A rotation step that waits for the end of `transition`.
+    private var rotationFx: FxKind?
     private var loading = Set<String>()
     private var server: Server?
     private var signals: [DispatchSourceSignal] = []
@@ -92,6 +54,10 @@ final class Daemon {
         power.onChange = { [self] in updatePause() }
         screens.onChange = { [self] in displaysChanged() }
         screens.onLayout = { [self] in wallpaper.sync($0) }
+        rotator.load = { [self] path, done in load(path, pixelArt: true, done: done) }
+        rotator.show = { [self] fx in
+            if transition == nil { apply(fx: fx) } else { rotationFx = fx }  // after the end of it
+        }
         screens.menubar = config.menubar
         wallpaper.menubar = config.menubar
         wallpaper.start()
@@ -119,6 +85,16 @@ final class Daemon {
                 if let err { return reply(.err(Daemon.message(err))) }
                 if transition != nil { return reply(.ok()) }  // it started during the decode
                 set(key, .img(path), fx)
+                reply(.ok())
+            }
+        case ("rotate", 3):
+            guard let key = State.key(a[2]) else { return reply(.err("bad argument")) }
+            let dir = a[1]
+            if transition != nil { return reply(.ok()) }
+            rotator.begin(dir) { [self] err in
+                if let err { return reply(.err(Daemon.message(err))) }
+                if transition != nil { return reply(.ok()) }
+                set(key, .dir(dir), rotator.pick())
                 reply(.ok())
             }
         case ("clear", 4):
@@ -174,10 +150,11 @@ final class Daemon {
     // MARK: Players
 
     /// Decode on the background queue, then create the player on the main thread.
-    private func load(_ path: String, done: @escaping (Error?) -> Void) {
+    /// `pixelArt`: an image that is not pixel art is an error (SPEC §19).
+    private func load(_ path: String, pixelArt: Bool = false, done: @escaping (Error?) -> Void) {
         queue.async { [self] in
             let result = Result { () throws -> Player in
-                let (hash, cache) = try Decoder.load(path: path)
+                let (hash, cache) = try Decoder.load(path: path, pixelArt: pixelArt)
                 return try Player(key: hash, path: path, cache: cache)
             }
             DispatchQueue.main.async { [self] in
@@ -191,6 +168,23 @@ final class Daemon {
                 }
             }
         }
+    }
+
+    /// The first file of a rotation, at a restore.
+    private func ensureRotation(_ dir: String) {
+        guard loading.insert("dir " + dir).inserted else { return }
+        rotator.begin(dir) { [self] err in
+            loading.remove("dir " + dir)
+            if let err {
+                logger.error("rotate \(dir, privacy: .public): \(Daemon.message(err), privacy: .public)")
+            } else {
+                apply()
+            }
+        }
+    }
+
+    private func target(_ s: Screen) -> Target {
+        state[String(s.id)] ?? state["all"] ?? .color(0)
     }
 
     private func ensureLoaded(_ path: String) {
@@ -208,22 +202,42 @@ final class Daemon {
     /// Show the target of each screen. Release players without layers.
     /// `fx`: show the change with this transition (SPEC §17). A restore ends a transition that runs.
     private func apply(fx: FxKind = .disabled) {
+        rotationFx = nil  // this call shows the files of the rotations
         transition?.end()
+        rotator.keep(Set(state.values.compactMap { if case .dir(let d) = $0 { return d } else { return nil } }))
         let t = Transition(fx)
+        var windows: [(window: NSWindow, display: CGDirectDisplayID)] = []
         for s in screens.all.values {
             t?.before(s)
-            var changed = false
-            switch state[String(s.id)] ?? state["all"] ?? .color(0) {
+            var changed = false, file: String?
+            switch target(s) {
             case .color(let c): changed = screens.show(s, color: c)
-            case .img(let path):
-                if let p = players[path] { changed = screens.show(s, player: p) } else { ensureLoaded(path) }
+            case .img(let path): file = path
+            case .dir(let dir):
+                file = rotator.file(dir)
+                if file == nil { ensureRotation(dir) }
+            }
+            if let file {
+                if let p = players[file] { changed = screens.show(s, player: p) } else { ensureLoaded(file) }
             }
             t?.after(s, changed: changed)
+            if changed { windows.append((s.window, s.id)) }
         }
+        // Keep the next files of the rotations: `show` comes after all of them load.
         let used = Set(screens.all.values.compactMap { $0.player.map(ObjectIdentifier.init) })
-        players = players.filter { used.contains(ObjectIdentifier($0.value)) }
-        if let t, t.start(onEnd: { [self] in transition = nil }) { transition = t }
+        let next = rotator.files
+        players = players.filter { used.contains(ObjectIdentifier($0.value)) || next.contains($0.key) }
+        if let t, t.start(onEnd: { [self] in transitionEnded() }) {
+            transition = t
+            fxWindows = windows
+        }
         updatePause()
+    }
+
+    private func transitionEnded() {
+        transition = nil
+        fxWindows = []
+        if let fx = rotationFx { apply(fx: fx) }
     }
 
     private func displaysChanged() {
@@ -233,12 +247,15 @@ final class Daemon {
 
     private func updatePause() {
         // A transition does not pause: it ends when no screen of it can show it.
-        if let t = transition, !power.reasons(windows: t.windows).isEmpty { t.end() }
+        if let t = transition, !power.reasons(windows: fxWindows).isEmpty { t.end() }
         var seen = Set<ObjectIdentifier>()
         for s in screens.all.values {
             guard let p = s.player, seen.insert(ObjectIdentifier(p)).inserted else { continue }
             p.setRunning(power.reasons(windows: screens.windows(of: p)).isEmpty)
         }
+        // The clock of the rotations stops when no screen can show them.
+        let rotating = screens.all.values.filter { if case .dir = target($0) { return true } else { return false } }
+        rotator.setRunning(!rotating.isEmpty && power.reasons(windows: rotating.map { ($0.window, $0.id) }).isEmpty)
     }
 
     // MARK: State file

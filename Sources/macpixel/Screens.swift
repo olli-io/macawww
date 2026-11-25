@@ -1,11 +1,12 @@
 import AppKit
 
 /// One wallpaper window on one display.
-final class Screen {
+final class Screen: Canvas {
     let id: CGDirectDisplayID
     let window: NSWindow
     /// Shows the image or the colour. A sublayer of the root layer of the window.
     let layer: CALayer
+    var image: CALayer { layer }
     /// Backing pixels for each point.
     var scale: CGFloat
     var player: Player?

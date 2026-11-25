@@ -2,18 +2,7 @@ import Foundation
 
 /// Interactive file list for `img <dir>` (SPEC §4). Keys come from stdin. The list goes to stderr.
 enum Picker {
-    static let extensions: Set<String> = ["gif", "png", "jpg", "jpeg"]
-
     enum Key { case up, down, enter, cancel, other }
-
-    /// Image files in `dir`, in Finder name order. Hidden files and directories are not included.
-    static func images(in dir: URL) -> [URL] {
-        let items = (try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
-        return items
-            .filter { !$0.hasDirectoryPath && extensions.contains($0.pathExtension.lowercased()) }
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-    }
 
     /// First visible index, so that `selected` is in a window of `rows` lines.
     static func scrollTop(_ top: Int, selected: Int, rows: Int) -> Int {
@@ -30,7 +19,7 @@ enum Picker {
 
     /// Returns the selected file. Nil on cancel or error (the error message is printed).
     static func run(dir: URL) -> URL? {
-        let files = images(in: dir)
+        let files = Folder.images(in: dir)
         guard !files.isEmpty else {
             eprint("no .gif, .png or .jpg files in \(dir.path)")
             return nil

@@ -4,7 +4,7 @@ import Foundation
 /// `macpixel check`: lists the images that are not pixel art (SPEC §4).
 /// Runs in the client. No daemon, no cache file.
 enum Check {
-    static let notPixelArt = "the image is not pixel art"
+    static let notPixelArt = MCWError.notPixelArt.description
 
     /// The integer upscale of the image, as the decoder calculates it (SPEC §6 step 5). 1 = not pixel art.
     static func factor(_ url: URL) throws -> Int {
@@ -47,7 +47,7 @@ enum Check {
     /// The images of `path` that are not pixel art, each with the reason. A file gives only itself.
     static func rejected(_ path: String) -> [(url: URL, reason: String)] {
         let url = URL(fileURLWithPath: path).standardizedFileURL
-        let files = isDirectory(url.path) ? Picker.images(in: url) : [url]
+        let files = Folder.isDirectory(url.path) ? Folder.images(in: url) : [url]
         var out: [(url: URL, reason: String)] = []
         for f in files {
             if let r = autoreleasepool(invoking: { reason(f) }) { out.append((f, r)) }

@@ -5,21 +5,8 @@ import XCTest
 @testable import macpixel
 
 final class CheckTests: XCTestCase {
-    /// PNG of random pixels (w × h), each one an n×n block.
     private func png(w: Int, h: Int, n: Int, in dir: URL, name: String) throws -> URL {
-        let px = Fixture.upscale(Fixture.frames(w: w, h: h, count: 1)[0].enumerated().map { $0.offset % 4 == 3 ? 255 : $0.element },
-                                 w: w, h: h, n: n)
-        let data = CFDataCreate(nil, px, px.count)!
-        let info = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-        let img = CGImage(width: w * n, height: h * n, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * n * 4,
-                          space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGBitmapInfo(rawValue: info),
-                          provider: CGDataProvider(data: data)!, decode: nil, shouldInterpolate: false,
-                          intent: .defaultIntent)!
-        let url = dir.appendingPathComponent(name)
-        let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil)!
-        CGImageDestinationAddImage(dest, img, nil)
-        XCTAssertTrue(CGImageDestinationFinalize(dest))
-        return url
+        Fixture.png(w: w, h: h, n: n, in: dir, name: name)
     }
 
     private func tmpDir() throws -> URL {

@@ -4,12 +4,18 @@ enum MCWError: Error, CustomStringConvertible {
     case io(String)
     case bad(String)
     case decode(String)
+    /// The decoder found no integer upscale (SPEC §6 step 5) and the caller wants only pixel art.
+    case notPixelArt
+    /// A directory of a rotation has no file that loads as pixel art (SPEC §19).
+    case noPixelArt(String)
 
     var description: String {
         switch self {
         case .io(let m): return "io: \(m)"
         case .bad(let m): return "bad cache file: \(m)"
         case .decode(let m): return "decode: \(m)"
+        case .notPixelArt: return "the image is not pixel art"
+        case .noPixelArt(let dir): return "no pixel art in \(dir)"
         }
     }
 }

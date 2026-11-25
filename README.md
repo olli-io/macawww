@@ -118,6 +118,7 @@ To try macpixel without the launch agent, run `macpixel daemon` in a terminal. I
 | `macpixel daemon` | Start the daemon in the foreground. |
 | `macpixel img <path> [--screen <id\|all>] [--fx <name>]` | Set an image as wallpaper. The default screen is `all`. `--fx`: see [Transitions](#transitions). |
 | `macpixel <dir>` or `macpixel img <dir>` | Show a list of the `.gif`, `.png` and `.jpg` files in the directory. Select one with the arrow keys and Enter. `q` cancels. |
+| `macpixel rotate <dir> [--screen <id\|all>]` | Show the pixel art in the directory, one file at a time. See [Rotation](#rotation). |
 | `macpixel clear [--color <hex>] [--screen <id\|all>] [--fx <name>]` | Set a solid colour. The default colour is `#000000`. |
 | `macpixel check [<dir>]` | List the images that are not pixel art. See [Pixel art](#pixel-art). |
 | `macpixel query` | Show each screen with its size, wallpaper and state. |
@@ -166,6 +167,28 @@ macpixel img forest.gif --fx wipe      # for this change only
 ```
 
 The `transition` key of the config file sets the default. `--fx` has priority. Animations play during a transition. During a transition, `img` and `clear` have no effect. There is no transition while the wallpaper is paused or not visible.
+
+## Rotation
+
+`rotate` shows the pixel art in a directory, one file at a time. Each change has a transition.
+
+```sh
+macpixel rotate ~/Pictures/pixel-art
+macpixel rotate ~/Pictures/city --screen 2
+```
+
+- Only pixel art shows (see [Pixel art](#pixel-art)). macpixel skips the other images and the files that it cannot read. The directory must contain one pixel art image at minimum.
+- macpixel reads the directory again before each change, so you can add and remove files. It does not look in subdirectories.
+- Set the interval, the order and the transitions in the [config file](#configuration):
+
+  ```
+  rotate_interval = 600               # seconds, 10 or more (default 300)
+  random_order = true                 # default false: Finder name order
+  rotate_transition = burn, rain      # one name, random, or a list (default: the transition key)
+  ```
+
+- The rotation stops while the wallpaper is paused (see [States](#states)), and continues when it resumes.
+- `img` or `clear` on the same screen stops the rotation. After a restart of the daemon, the rotation starts again from its first file.
 
 ## More than one screen
 
@@ -255,6 +278,8 @@ To show one specific image on all screens, set `screensaver` in the config file:
 screensaver = ~/Pictures/pixel-art/city.gif
 ```
 
+A directory as `screensaver`, or a screen that shows a rotation, makes the screensaver rotate through the pixel art of the directory, with the same keys as `rotate`.
+
 The screensaver reads the state and the config each time it starts. It does not need the daemon. If the `screensaver` image cannot be read, the screensaver shows the current wallpaper.
 
 The bundle has an ad-hoc signature. If macOS does not load a downloaded bundle, build it on your Mac.
@@ -264,7 +289,7 @@ The bundle has an ad-hoc signature. If macOS does not load a downloaded bundle, 
 | Path | Contents |
 |---|---|
 | `~/.config/macpixel/config` | Optional configuration. |
-| `~/Library/Application Support/macpixel/state` | The wallpaper of each screen. The daemon reads it at start. |
+| `~/Library/Application Support/macpixel/state` | The wallpaper or the rotation of each screen. The daemon reads it at start. |
 | `~/Library/Caches/macpixel/` | Decoded images, and the pictures that macOS uses as desktop picture. If you delete them, set the wallpaper again. |
 | `~/Library/Screen Savers/macpixel.saver` | The optional screensaver. |
 | `~/Library/LaunchAgents/io.macpixel.daemon.plist` | The launch agent that `install` writes. |
@@ -278,7 +303,10 @@ The `config` file has one `key = value` pair on each line. Restart the daemon af
 |---|---|---|
 | `max_cache_mb` | `512` | Maximum size of the cache directory in MB. macpixel deletes the files that were used least recently. |
 | `transition` | `burn` | The transition of `img` and `clear`: `burn`, `sweep`, `slide`, `wipe`, `decrypt`, `pour`, `smoke`, `vhstape`, `rain` or `disabled`. |
-| `screensaver` | not set | The image of the screensaver: an absolute path, or a path that starts with `~/`. Not set: the screensaver shows the wallpaper of each screen. |
+| `screensaver` | not set | The image or the directory of the screensaver: an absolute path, or a path that starts with `~/`. Not set: the screensaver shows the wallpaper of each screen. |
+| `rotate_interval` | `300` | The seconds between two files of a [rotation](#rotation). 10 or more. |
+| `random_order` | `false` | `true`: a rotation shows the files in a random order. Each file shows one time before a file shows again. `false`: Finder name order. |
+| `rotate_transition` | the `transition` key | The transitions of a rotation: one name, `random` (all but `disabled`), or a list such as `burn, wipe, rain`. Each change uses one of the list, at random. |
 | `menubar` | not set | The colour behind the menu bar, as `RRGGBB`. A strip of this colour covers the top of the wallpaper on each screen. Not set: the menu bar shows the wallpaper. |
 
 ## Problems

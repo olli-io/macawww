@@ -10,9 +10,9 @@ final class PickerTests: XCTestCase {
         for name in ["b10.gif", "b2.GIF", "a.png", "c.jpg", "d.jpeg", "e.txt", ".hidden.gif", "noext"] {
             fm.createFile(atPath: dir.appendingPathComponent(name).path, contents: nil)
         }
-        XCTAssertEqual(Picker.images(in: dir).map(\.lastPathComponent),
+        XCTAssertEqual(Folder.images(in: dir).map(\.lastPathComponent),
                        ["a.png", "b2.GIF", "b10.gif", "c.jpg", "d.jpeg"])
-        XCTAssertEqual(Picker.images(in: dir.appendingPathComponent("missing")), [])
+        XCTAssertEqual(Folder.images(in: dir.appendingPathComponent("missing")), [])
     }
 
     func testScrollTop() {

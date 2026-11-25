@@ -14,7 +14,8 @@ BUNDLE="$ROOT/.build/saver/macpixel.saver"
 DEPLOYMENT_TARGET=14.0
 VERSION="${VERSION:-0.0.0}"
 # The files of the CLI that the screensaver uses. They do not use the daemon.
-SHARED="Cache Child Config Decoder Diff FxKind Layout Log Paths Player State Upscale"
+SHARED="Cache Child Config Decoder Diff Folder Fx FxBurn FxDecrypt FxFall FxKind FxSlide FxSmoke FxSweep FxVhstape FxWipe
+    Layout Log Paths Player Rotation State Tint Transition Upscale"
 
 install=0
 for arg in "$@"; do
