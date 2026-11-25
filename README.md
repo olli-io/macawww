@@ -67,13 +67,21 @@ cp .build/release/macpixel ~/.local/bin/
 macpixel install
 ```
 
+`make install` does the build and these steps in one command. It also stops a daemon that runs.
+
 To run the tests:
 
 ```sh
 swift test
 ```
 
-A push of a tag `vX.Y.Z` makes a release: GitHub Actions runs the tests on macOS 14 and 15, builds the arm64 binary, and publishes it ([build.yml](.github/workflows/build.yml)).
+To build the screensaver and copy it to `~/Library/Screen Savers`:
+
+```sh
+bin/build-saver --install
+```
+
+A push of a tag `vX.Y.Z` makes a release: GitHub Actions runs the tests, builds the arm64 binary and the screensaver, and publishes them ([build.yml](.github/workflows/build.yml)).
 
 ## Quick start
 
@@ -234,6 +242,23 @@ macpixel also sets the built-in macOS desktop picture to your wallpaper. This is
 - macOS lets an application change the active Space only. Each other Space gets the picture when you go to it for the first time.
 - macpixel replaces the desktop picture that you had before and does not store it. `macpixel uninstall` does not put it back.
 
+## Screensaver
+
+`macpixel.saver` is an optional macOS screensaver. Each screen shows its current wallpaper, with the same animation and the same scale.
+
+1. Install it: `install.sh --saver`, or `bin/build-saver --install` from the source.
+2. Select **macpixel** in System Settings → Screen Saver.
+
+To show one specific image on all screens, set `screensaver` in the config file:
+
+```
+screensaver = ~/Pictures/pixel-art/city.gif
+```
+
+The screensaver reads the state and the config each time it starts. It does not need the daemon. If the `screensaver` image cannot be read, the screensaver shows the current wallpaper.
+
+The bundle has an ad-hoc signature. If macOS does not load a downloaded bundle, build it on your Mac.
+
 ## Files
 
 | Path | Contents |
@@ -241,18 +266,20 @@ macpixel also sets the built-in macOS desktop picture to your wallpaper. This is
 | `~/.config/macpixel/config` | Optional configuration. |
 | `~/Library/Application Support/macpixel/state` | The wallpaper of each screen. The daemon reads it at start. |
 | `~/Library/Caches/macpixel/` | Decoded images, and the pictures that macOS uses as desktop picture. If you delete them, set the wallpaper again. |
+| `~/Library/Screen Savers/macpixel.saver` | The optional screensaver. |
 | `~/Library/LaunchAgents/io.macpixel.daemon.plist` | The launch agent that `install` writes. |
 | `~/Library/Logs/macpixel.log` | The log of the daemon when the launch agent starts it. |
 
 ### Configuration
 
-The `config` file has one `key = value` pair on each line. Restart the daemon after a change.
+The `config` file has one `key = value` pair on each line. Restart the daemon after a change. The screensaver reads the file each time it starts.
 
 | Key | Default | Function |
 |---|---|---|
 | `max_cache_mb` | `512` | Maximum size of the cache directory in MB. macpixel deletes the files that were used least recently. |
 | `transition` | `burn` | The transition of `img` and `clear`: `burn`, `sweep`, `slide`, `wipe`, `decrypt`, `pour`, `smoke`, `vhstape`, `rain` or `disabled`. |
-| `menu_bar_color` | not set | A colour as `#RRGGBB`. macpixel shows a bar of this colour behind the macOS menu bar, so the menu bar has a static colour and does not show the wallpaper. Without this key, the menu bar shows the wallpaper. |
+| `screensaver` | not set | The image of the screensaver: an absolute path, or a path that starts with `~/`. Not set: the screensaver shows the wallpaper of each screen. |
+| `menubar` | not set | The colour behind the menu bar, as `RRGGBB`. A strip of this colour covers the top of the wallpaper on each screen. Not set: the menu bar shows the wallpaper. |
 
 ## Problems
 

@@ -2,10 +2,11 @@
 # Downloads the released macpixel binary, copies it to a bin directory, and starts the daemon at login.
 # To build from source, see "Build" in README.md.
 #
-# usage: install.sh [--bin-dir <dir>] [--version <vX.Y.Z>] [--no-agent]
+# usage: install.sh [--bin-dir <dir>] [--version <vX.Y.Z>] [--no-agent] [--saver]
 #   --bin-dir <dir>      where to put the binary (default: ~/.local/bin)
 #   --version <vX.Y.Z>   the release to install (default: the latest release)
 #   --no-agent           copy the binary only; do not start the daemon at login
+#   --saver              also install the screensaver in ~/Library/Screen Savers
 
 set -eu
 
@@ -14,6 +15,8 @@ ASSET="macpixel-arm64-macos"
 BIN_DIR="$HOME/.local/bin"
 VERSION=""
 AGENT=1
+SAVER=0
+SAVER_ASSET="macpixel.saver.zip"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -31,8 +34,12 @@ while [ $# -gt 0 ]; do
             AGENT=0
             shift
             ;;
+        --saver)
+            SAVER=1
+            shift
+            ;;
         *)
-            echo "usage: install.sh [--bin-dir <dir>] [--version <vX.Y.Z>] [--no-agent]" >&2
+            echo "usage: install.sh [--bin-dir <dir>] [--version <vX.Y.Z>] [--no-agent] [--saver]" >&2
             exit 2
             ;;
     esac
@@ -82,6 +89,17 @@ echo "Installed $DEST"
 if [ "$AGENT" -eq 1 ]; then
     "$DEST" install
     echo "The daemon runs now and starts at login."
+fi
+
+if [ "$SAVER" -eq 1 ]; then
+    curl -fsSL -o "$TMP/$SAVER_ASSET" "$URL/$SAVER_ASSET" || fail "cannot download $URL/$SAVER_ASSET"
+    (cd "$TMP" && grep "  $SAVER_ASSET\$" SHA256SUMS | shasum -a 256 -c - >/dev/null) || fail "the checksum of $SAVER_ASSET is incorrect"
+    SAVER_DIR="$HOME/Library/Screen Savers"
+    mkdir -p "$SAVER_DIR"
+    rm -rf "$SAVER_DIR/macpixel.saver"
+    ditto -x -k "$TMP/$SAVER_ASSET" "$SAVER_DIR"
+    echo "Installed $SAVER_DIR/macpixel.saver"
+    echo "Select macpixel in System Settings > Screen Saver."
 fi
 
 case ":$PATH:" in

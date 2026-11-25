@@ -1,27 +1,6 @@
 import AppKit
 import os
 
-let logger = Logger(subsystem: "io.macpixel", category: "daemon")
-
-enum Target: Equatable {
-    case img(String)
-    case color(UInt32)
-
-    /// `#RRGGBB` or `RRGGBB`.
-    static func parseColor(_ s: String) -> UInt32? {
-        let h = s.hasPrefix("#") ? s.dropFirst() : Substring(s)
-        guard h.count == 6, h.allSatisfy(\.isHexDigit) else { return nil }
-        return UInt32(h, radix: 16)
-    }
-
-    var line: String {
-        switch self {
-        case .img(let p): return "img \(p)"
-        case .color(let c): return "color " + String(format: "#%06X", c)
-        }
-    }
-}
-
 /// Unix socket server on the main queue. One request line, one reply line per connection.
 final class Server {
     private let fd: Int32
@@ -68,11 +47,6 @@ final class Server {
 
 /// Daemon: state, players, commands (SPEC §3, §11). Main thread only.
 final class Daemon {
-    static var supportDir: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/macpixel", isDirectory: true)
-    }
-    private static var stateURL: URL { supportDir.appendingPathComponent("state") }
     private static var instance: Daemon?
 
     private let config = Config.load()
@@ -97,11 +71,6 @@ final class Daemon {
         exit(0)
     }
 
-    /// "all" or a display ID → state key.
-    static func targetKey(_ s: String) -> String? {
-        s == "all" ? s : UInt32(s).map { String($0) }
-    }
-
     private func start() {
         if Client.isRunning() {
             eprint("daemon already running")
@@ -119,11 +88,12 @@ final class Daemon {
             src.resume()
             signals.append(src)
         }
-        state = loadState()
+        state = State.load()
         power.onChange = { [self] in updatePause() }
         screens.onChange = { [self] in displaysChanged() }
         screens.onLayout = { [self] in wallpaper.sync($0) }
-        screens.barColor = config.menuBarColor
+        screens.menubar = config.menubar
+        wallpaper.menubar = config.menubar
         wallpaper.start()
         power.start()
         screens.start()
@@ -140,7 +110,7 @@ final class Daemon {
     private func handle(_ a: [String], _ reply: @escaping (Reply) -> Void) {
         switch (a[0], a.count) {
         case ("img", 4):
-            guard let key = Daemon.targetKey(a[2]), let fx = fxKind(a[3]) else {
+            guard let key = State.key(a[2]), let fx = fxKind(a[3]) else {
                 return reply(.err("bad argument"))
             }
             let path = a[1]
@@ -152,7 +122,7 @@ final class Daemon {
                 reply(.ok())
             }
         case ("clear", 4):
-            guard let key = Daemon.targetKey(a[2]), let c = Target.parseColor(a[1]), let fx = fxKind(a[3]) else {
+            guard let key = State.key(a[2]), let c = Target.parseColor(a[1]), let fx = fxKind(a[3]) else {
                 return reply(.err("bad argument"))
             }
             if transition != nil { return reply(.ok()) }
@@ -273,26 +243,11 @@ final class Daemon {
 
     // MARK: State file
 
-    private func loadState() -> [String: Target] {
-        guard let text = try? String(contentsOf: Daemon.stateURL, encoding: .utf8) else { return [:] }
-        var s: [String: Target] = [:]
-        for line in text.split(separator: "\n") {
-            let f = line.split(separator: " ", maxSplits: 2).map(String.init)
-            guard f.count == 3, let key = Daemon.targetKey(f[0]) else { continue }
-            if f[1] == "img" {
-                s[key] = .img(f[2])
-            } else if f[1] == "color", let c = Target.parseColor(f[2]) {
-                s[key] = .color(c)
-            }
-        }
-        return s
-    }
-
     private func saveState() {
         let text = state.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value.line)\n" }.joined()
         do {
-            try FileManager.default.createDirectory(at: Daemon.supportDir, withIntermediateDirectories: true)
-            try text.write(to: Daemon.stateURL, atomically: true, encoding: .utf8)
+            try FileManager.default.createDirectory(at: Paths.supportDir, withIntermediateDirectories: true)
+            try text.write(to: State.url, atomically: true, encoding: .utf8)
         } catch {
             logger.error("save state: \(error.localizedDescription, privacy: .public)")
         }

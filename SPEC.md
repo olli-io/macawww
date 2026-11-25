@@ -12,7 +12,7 @@ Non-goals (v1):
 - GUI or menu bar item.
 - Playlists, slideshows. Transitions other than those of §17.
 - Video input (see §15).
-- App bundle. macpixel is one CLI binary.
+- App bundle. macpixel is one CLI binary. The one exception is the optional screensaver bundle (§18).
 
 ## 2. Targets
 
@@ -81,10 +81,19 @@ One window per screen:
 - Level `CGWindowLevelForKey(.desktopWindow)`. Desktop icons stay above.
 - `ignoresMouseEvents = true`, `isOpaque = true`, `hasShadow = false`.
 - `collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]`.
-- Content view is layer-hosting. The root layer is black and has `masksToBounds = true`. It has one image sublayer (and the bar of §18, when the config sets it):
+- Content view is layer-hosting. The root layer is black and has `masksToBounds = true`. It has one image sublayer (and the menu bar strip, when the config sets it):
   - `frame` = the root bounds, `contentsGravity = .resizeAspectFill` (see "Integer scale" for pixel art)
   - `magnificationFilter = .nearest`, `minificationFilter = .linear`
   - `contents` = the `Player`'s front IOSurface.
+
+### Menu bar strip
+
+Optional. When the `menubar` key of `config` (§11) has a colour, the root layer of each window has one more sublayer: a strip of that colour at the top of the screen.
+
+- Height = the menu bar area in points: `max(safeAreaInsets.top, frame.maxY - visibleFrame.maxY)`. Thus a screen with a notch always has the strip. A screen without a notch and with a hidden menu bar has none (height 0).
+- `zPosition = 1`: the strip is above the image layer and above the layers of a transition (§17).
+- The strip has no contents and never changes per frame. It hides the wallpaper rows below it; the scale and the position of the wallpaper do not change.
+- The macOS menu bar is translucent, so it shows this colour.
 
 ### Scaling
 
@@ -215,7 +224,7 @@ Signals: `NSApplication.didChangeScreenParametersNotification`, `NSWorkspace.did
 Debounce 250 ms, then reconcile by `CGDirectDisplayID`:
 - New screen: create a window. Use the per-screen state, else the `all` state.
 - Gone screen: close the window. Release the player when it has no layers.
-- Changed frame or backing scale: `setFrame(screen.frame, display: false)`, then set the image layer frame again (§5).
+- Changed frame, backing scale or height of the menu bar area: `setFrame(screen.frame, display: false)`, then set the frames of the image layer and of the menu bar strip again (§5).
 
 Then restore the invariant (§8) for each player that changed.
 
@@ -225,9 +234,10 @@ Then restore the invariant (§8) for each player that changed.
 - `~/.config/macpixel/config` (optional, `key = value`):
   - `max_cache_mb` (int, default `512`)
   - `transition` (`burn`, `sweep`, `slide`, `wipe`, `decrypt`, `pour`, `smoke`, `vhstape`, `rain` or `disabled`, default `burn`; see §17)
-  - `menu_bar_color` (`#RRGGBB` or `RRGGBB`, default: not set; see §18)
+  - `screensaver` (path of an image, no default; `~/` is the home directory; see §18)
+  - `menubar` (colour `RRGGBB` or `#RRGGBB`, no default; the strip behind the menu bar, see §5)
 
-The daemon reads `config` one time, at start.
+The daemon reads `config` one time, at start. The screensaver reads `config` and `state` each time it starts.
 
 ## 12. Start at login
 
@@ -257,6 +267,10 @@ Sources/macpixel/
   main.swift          CLI parse, dispatch
   Daemon.swift        app setup, socket server, state file
   Config.swift        config file
+  Paths.swift         directories, home directory of the user
+  State.swift         targets, state file format
+  Log.swift           the logger
+  Layout.swift        integer scale, frame of the image layer, layers of a view
   Client.swift        socket client
   Picker.swift        file list for `img <dir>`
   Screens.swift       window per screen, reconcile
@@ -267,6 +281,7 @@ Sources/macpixel/
   Cache.swift         file format, mmap reader, eviction
   Player.swift        IOSurface double buffer, timer
   Power.swift         pause signals → pause reasons
+  FxKind.swift        names of the transitions
   Fx.swift            transitions: cell grid, pieces, the parts that the effects share
   Fx<Name>.swift      one effect each: Burn, Sweep, Wipe, Slide, Smoke, Decrypt, Vhstape; Fall is pour and rain
   Transition.swift    transitions: layers, grid surface, step timer
@@ -274,10 +289,15 @@ Sources/macpixel/
   SystemWallpaper.swift  macOS desktop picture sync, still PNG
   Child.swift         child process for internal commands
   LaunchAgent.swift   install / uninstall
+Sources/saver/        the screensaver bundle (§18). Not a SwiftPM target.
+  SaverView.swift     the ScreenSaverView: layers, start, stop
+  SaverSource.swift   selection of the content, load, container cache
+  Info.plist.in       template of the bundle Info.plist
+bin/build-saver       builds, signs and installs the bundle
 Tests/macpixelTests/
 ```
 
-Frameworks: AppKit, QuartzCore, ImageIO, IOSurface, Compression, CryptoKit. No third-party dependencies.
+Frameworks: AppKit, QuartzCore, ImageIO, IOSurface, Compression, CryptoKit. The screensaver adds ScreenSaver. No third-party dependencies.
 
 ### Tests
 
@@ -288,10 +308,11 @@ Unit:
 - Integer upscale: factor, block check, point sample, decode restart with a smaller factor.
 - `check`: factor of a PNG, factor over all frames, list of a directory, exit code.
 - Integer scale per screen: k for exact fit, for cut, and for art larger than the screen.
-- Menu bar height: with a menu bar, without a menu bar.
-- Still PNG for the macOS desktop picture: size, scale and cut are equal to the layer.
+- Menu bar height: with a menu bar, without a menu bar, with a notch.
+- Still PNG for the macOS desktop picture: size, scale and cut are equal to the layer, menu bar strip.
 - Double-buffer invariant over 3 loops, including 1, 2 and 3 frame animations.
 - Transitions: gradients, burn order, flood order, tile order, start and end of each kind, grid pixels, pieces, slide timing, grey, grid placement.
+- State file parse, target of a display, config parse with the `screensaver` and `menubar` keys, frame of the image layer.
 
 Manual (macOS):
 - Hotplug, resolution change, mirror on/off.
@@ -299,8 +320,9 @@ Manual (macOS):
 - Spaces, full-screen app, Mission Control.
 - Battery unplug (no pause), Low Power Mode (pause).
 - macOS desktop picture: follows `img` and `clear`, each Space after a visit, lock screen.
-- Menu bar colour: with and without `menu_bar_color`, during a transition, automatic hide of the menu bar on and off, a screen without a menu bar.
+- Menu bar strip: colour and height on a screen with a notch and on a screen without, during a transition, hidden menu bar.
 - Transitions: each kind, image ↔ colour, pixel art ↔ other image, two screens, `pause` during a transition, `img` and `clear` during a transition (ignored, exit code 0).
+- Screensaver (§18): preview in System Settings, each screen shows its wallpaper, a colour, the `screensaver` key (image in the cache, image not in the cache, bad path), no `legacyScreenSaver` process after the stop.
 - Measure with `top -pid`, `footprint`, `sudo powermetrics --samplers tasks`.
 
 ## 15. Open points
@@ -321,7 +343,8 @@ For each screen, after its image, colour, frame or backing scale changed (the `o
 | Other image | the original file | proportional, clipping allowed (aspect fill) |
 | Colour | `<cache dir>/color-<RRGGBB>.png`, 16×16 | axes independent |
 
-- A missing PNG is made by a child process (`macpixel still <mcw> <png> <W> <H>`, `macpixel still-color <hex> <png>`), as in §6. The daemon does not load ImageIO.
+- A missing PNG is made by a child process (`macpixel still <mcw> <png> <W> <H> [<bar px> <hex>]`, `macpixel still-color <hex> <png>`), as in §6. The daemon does not load ImageIO.
+- Menu bar strip (§5): the pixel-art PNG has the strip in its top rows, and its name is `<sha256>-<W>x<H>-<bar px>-<RRGGBB>.png`. The other two content types do not have the strip in the desktop picture: macOS scales those files.
 - The call is `NSWorkspace.setDesktopImageURL(_:for:options:)`. Skip it when `desktopImageURL(for:)` already gives the same path.
 - macOS shows the first frame only. Animation stays in the macpixel window.
 - Spaces: the macOS call changes the active Space only. On `NSWorkspace.activeSpaceDidChangeNotification`, set the picture again for each screen. Thus each Space gets the picture when the user goes to it. No public API sets all Spaces in one operation. Never poll.
@@ -363,13 +386,28 @@ Rules:
 - A transition does not pause. It ends at once when a pause reason (§9) is active for all its screens, and it does not start in that condition. Thus a paused daemon has no wakeups.
 - A screen whose wallpaper did not change has no transition.
 
-## 18. Menu bar colour
+## 18. Screensaver
 
-The macOS menu bar shows the wallpaper window through its background. With the config key `menu_bar_color` (§11), the menu bar has one static colour instead. Without the key, there is no bar layer and no other effect.
+An optional bundle, `macpixel.saver`, shows the wallpaper as the macOS screensaver. It is a separate product: the CLI binary does not contain it, and it does not talk to the daemon. It reads the files of §7 and §11.
 
-- Each wallpaper window gets one more sublayer of the root layer: the bar. It has the colour as its `backgroundColor` (sRGB) and no contents.
-- Frame: the full width of the screen, at the top. Height = `screen.frame.maxY − screen.visibleFrame.maxY` in points, never less than 0. Thus a screen that shows no menu bar (automatic hide, or a second screen without its own menu bar) has a bar of height 0.
-- `zPosition = 1`: the bar is above the image layer and above the temporary layers of a transition (§17). A transition does not change the bar.
-- The height is calculated at each reconcile (§10). A change of the height causes a new layout of the screen, as a change of the frame does. Never poll.
-- The bar is not in the macOS desktop picture (§16). It exists only while the daemon runs.
-- Cost: one solid-colour layer. No surface, no timer, nothing on the tick path.
+**Build:** `bin/build-saver` compiles `Sources/saver/` and the files of `Sources/macpixel/` that do not use the daemon with one `swiftc` call (`-emit-library -Xlinker -bundle`), writes `Contents/Info.plist` (`NSPrincipalClass` = `MacpixelSaverView`), and makes an ad-hoc signature. `--install` copies the bundle to `~/Library/Screen Savers/`. There is no Xcode project.
+
+**Host:** macOS loads the bundle into `legacyScreenSaver`. This process has a sandbox: it can read all files, and it can write only in its container. Thus:
+- `Paths.home` comes from `getpwuid`, not from `NSHomeDirectory()` (the container).
+- The screensaver does not start a child process, and it does not write into the cache of the daemon. The access time of a cache file does not change, so the eviction of §7 does not see the use. A file that the daemon deletes stays mapped.
+
+**Content of a view** (one view for each screen), the first that loads:
+1. The `screensaver` image of `config`, on all screens.
+2. The target of the screen in `state`: the line of its display ID, else the `all` line. An image or a colour.
+3. Black.
+
+**Load of an image** (background queue): SHA-256 of the file, then the first that is valid:
+1. `~/Library/Caches/macpixel/<hash>.mcw`, the cache of the daemon. This is the usual case for the current wallpaper.
+2. `<container>/Library/Caches/macpixel/<hash>.mcw`.
+3. A decode in the host process (§6 steps 2 to 12) into the container cache. After it, the screensaver deletes the container cache files that no player uses.
+
+**Render:** the view is layer-hosting, with the layers of §5. A `Player` (§8) writes the frames; views that show the same file share one player. `startAnimation` and `stopAnimation` start and stop the player. `animateOneFrame` has no function, and `animationTimeInterval` is 1 hour. Pixel art has the integer scale of §5. The small preview in System Settings fills its view (aspect fill).
+
+**Stop:** macOS 14 and later do not destroy the views when the screensaver stops, and the host process continues. On the distributed notification `com.apple.screensaver.willstop` the view stops the player and, if it is not a preview, calls `exit(0)`. The observer exists only in a process with `legacyScreenSaver` in its name.
+
+There is no options sheet (§1: no GUI). The pause rules of §9 do not apply: macOS starts and stops the screensaver.

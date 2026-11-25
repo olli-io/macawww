@@ -49,8 +49,7 @@ enum Cache {
     static let maxSide = 16384
 
     static var dir: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/macpixel", isDirectory: true)
+        Paths.cacheDir
     }
 
     static func url(hash: String) -> URL { dir.appendingPathComponent(hash + ".mcw") }

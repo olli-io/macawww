@@ -6,25 +6,25 @@ final class Screen {
     let window: NSWindow
     /// Shows the image or the colour. A sublayer of the root layer of the window.
     let layer: CALayer
-    /// Solid colour below the menu bar (SPEC §18). nil when the config has no `menu_bar_color`.
-    let bar: CALayer?
-    /// Height of the menu bar in points. 0 when the screen shows no menu bar.
-    var barHeight: CGFloat = 0
     /// Backing pixels for each point.
     var scale: CGFloat
     var player: Player?
     var color: UInt32?
+    /// The strip behind the menu bar (SPEC §5). nil: no `menubar` colour.
+    var bar: CALayer?
+    /// Height of the menu bar area in points.
+    var barHeight: CGFloat = 0
+    /// Height of the strip in backing pixels. 0: no strip.
+    var barPixels: Int { bar == nil ? 0 : Int((barHeight * scale).rounded()) }
     /// Size in backing pixels.
     var pixelSize: (w: Int, h: Int) {
-        let size = window.frame.size
-        return (Int((size.width * scale).rounded()), Int((size.height * scale).rounded()))
+        Layout.pixels(window.frame.size, scale: scale)
     }
 
-    init(id: CGDirectDisplayID, window: NSWindow, layer: CALayer, bar: CALayer?, scale: CGFloat) {
+    init(id: CGDirectDisplayID, window: NSWindow, layer: CALayer, scale: CGFloat) {
         self.id = id
         self.window = window
         self.layer = layer
-        self.bar = bar
         self.scale = scale
     }
 }
@@ -32,17 +32,27 @@ final class Screen {
 /// Window per screen and reconcile on display changes (SPEC §5, §10). Main thread only.
 final class Screens {
     private(set) var all: [CGDirectDisplayID: Screen] = [:]
-    /// Colour of the menu bar background (SPEC §18). Set it before `start`.
-    var barColor: UInt32?
     /// Called after each reconcile.
     var onChange: () -> Void = {}
     /// Called after the image, the colour, the frame or the scale of a screen changed.
     var onLayout: (Screen) -> Void = { _ in }
+    /// The `menubar` colour of the config. Set it before `start`.
+    var menubar: UInt32?
     private var pending: DispatchWorkItem?
     private var tokens: [NSObjectProtocol] = []
 
     static func displayID(_ s: NSScreen) -> CGDirectDisplayID? {
         (s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+    }
+
+    /// Height (points) of the menu bar area: the notch area, or else the menu bar. 0 when there is none.
+    static func barHeight(_ s: NSScreen) -> CGFloat {
+        barHeight(frame: s.frame, visible: s.visibleFrame, safeTop: s.safeAreaInsets.top)
+    }
+
+    /// Height (points) of the menu bar area from the frames of a screen. Never less than 0.
+    static func barHeight(frame: CGRect, visible: CGRect, safeTop: CGFloat = 0) -> CGFloat {
+        max(0, safeTop, frame.maxY - visible.maxY)
     }
 
     func start() {
@@ -70,11 +80,10 @@ final class Screens {
         for s in NSScreen.screens {
             guard let id = Screens.displayID(s) else { continue }
             seen.insert(id)
-            let bar = Screens.barHeight(frame: s.frame, visible: s.visibleFrame)
+            let bar = Screens.barHeight(s)
             if let e = all[id] {
-                guard e.window.frame != s.frame || e.scale != s.backingScaleFactor || e.barHeight != bar else {
-                    continue
-                }
+                guard e.window.frame != s.frame || e.scale != s.backingScaleFactor
+                    || e.barHeight != bar else { continue }
                 e.window.setFrame(s.frame, display: false)
                 e.scale = s.backingScaleFactor
                 e.barHeight = bar
@@ -119,9 +128,7 @@ final class Screens {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         s.layer.contents = nil
-        s.layer.backgroundColor = CGColor(srgbRed: CGFloat(color >> 16 & 0xFF) / 255,
-                                          green: CGFloat(color >> 8 & 0xFF) / 255,
-                                          blue: CGFloat(color & 0xFF) / 255, alpha: 1)
+        s.layer.backgroundColor = Layout.color(color)
         CATransaction.commit()
         return true
     }
@@ -130,40 +137,14 @@ final class Screens {
         all.values.filter { $0.player === p }.map { ($0.window, $0.id) }
     }
 
-    /// Integer scale for pixel art (SPEC §5): the smallest k where art × k covers the screen.
-    /// Sizes in pixels. Never less than 1. There is no aspect-fill fallback: the overflow is cut.
-    static func integerScale(art: (w: Int, h: Int), screen: (w: Int, h: Int)) -> Int {
-        let w = max(1, art.w), h = max(1, art.h)
-        return max(1, (screen.w + w - 1) / w, (screen.h + h - 1) / h)
-    }
-
-    /// Scale and position (pixels, origin bottom left) of pixel art on a screen. Centred on whole pixels.
-    static func placement(art: (w: Int, h: Int), screen: (w: Int, h: Int)) -> (k: Int, x: Int, y: Int) {
-        let k = integerScale(art: art, screen: screen)
-        return (k, (screen.w - art.w * k) / 2, (screen.h - art.h * k) / 2)
-    }
-
-    /// Height of the menu bar: the part of the screen above the visible frame. Never less than 0.
-    static func barHeight(frame: CGRect, visible: CGRect) -> CGFloat {
-        max(0, frame.maxY - visible.maxY)
-    }
-
     /// Sets the frame of the image layer. Each screen has its own pixel size, thus its own k.
     private func layout(_ s: Screen) {
-        var frame = CGRect(origin: .zero, size: s.window.frame.size)
-        var gravity = CALayerContentsGravity.resizeAspectFill
-        if let p = s.player, p.pixelArt {
-            let at = Screens.placement(art: (p.width, p.height), screen: s.pixelSize)
-            // The root layer cuts the part outside the screen.
-            frame = CGRect(x: CGFloat(at.x) / s.scale, y: CGFloat(at.y) / s.scale,
-                           width: CGFloat(p.width * at.k) / s.scale, height: CGFloat(p.height * at.k) / s.scale)
-            gravity = .resize
-        }
+        let art = s.player.flatMap { $0.pixelArt ? (w: $0.width, h: $0.height) : nil }
+        let (frame, gravity) = Layout.imageFrame(art: art, size: s.window.frame.size, scale: s.scale)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         s.layer.frame = frame
         s.layer.contentsGravity = gravity
-        // The origin is at the bottom left: the bar is at the top.
         let size = s.window.frame.size
         s.bar?.frame = CGRect(x: 0, y: size.height - s.barHeight, width: size.width, height: s.barHeight)
         CATransaction.commit()
@@ -182,33 +163,22 @@ final class Screens {
         w.isReleasedWhenClosed = false
         w.animationBehavior = .none
 
-        let root = CALayer()
-        root.backgroundColor = CGColor(gray: 0, alpha: 1)
-        root.masksToBounds = true
-        let layer = CALayer()
-        layer.contentsGravity = .resizeAspectFill
-        layer.magnificationFilter = .nearest
-        layer.minificationFilter = .linear
-        layer.backgroundColor = CGColor(gray: 0, alpha: 1)
-        layer.actions = ["contents": NSNull(), "backgroundColor": NSNull(), "bounds": NSNull(),
-                         "position": NSNull()]
-        root.addSublayer(layer)
-        var bar: CALayer?
-        if let c = barColor {
-            let b = CALayer()
-            b.backgroundColor = CGColor(srgbRed: CGFloat(c >> 16 & 0xFF) / 255, green: CGFloat(c >> 8 & 0xFF) / 255,
-                                        blue: CGFloat(c & 0xFF) / 255, alpha: 1)
-            b.zPosition = 1  // above the layers of a transition
-            b.actions = ["bounds": NSNull(), "position": NSNull()]
-            root.addSublayer(b)
-            bar = b
-        }
+        let (root, layer) = Layout.layers()
         // Layer-hosting view: set the layer before wantsLayer. AppKit does not draw into it.
         let v = NSView(frame: NSRect(origin: .zero, size: frame.size))
         v.layer = root
         v.wantsLayer = true
         w.contentView = v
         w.orderFront(nil)
-        return Screen(id: id, window: w, layer: layer, bar: bar, scale: scale)
+        let s = Screen(id: id, window: w, layer: layer, scale: scale)
+        if let menubar {
+            let bar = CALayer()
+            bar.backgroundColor = Layout.color(menubar)
+            bar.zPosition = 1  // above the layers of a transition
+            bar.actions = ["bounds": NSNull(), "position": NSNull()]
+            root.addSublayer(bar)
+            s.bar = bar
+        }
+        return s
     }
 }

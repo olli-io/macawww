@@ -1,0 +1,50 @@
+#!/bin/sh
+# Builds the macOS screensaver: .build/saver/macpixel.saver (SPEC §18)
+#
+#   bin/build-saver             build and sign the bundle
+#   bin/build-saver --install   also copy it to ~/Library/Screen Savers
+#
+# VERSION sets the version of the bundle (default: 0.0.0).
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+SRC="$ROOT/Sources/macpixel"
+SAVER="$ROOT/Sources/saver"
+BUNDLE="$ROOT/.build/saver/macpixel.saver"
+DEPLOYMENT_TARGET=14.0
+VERSION="${VERSION:-0.0.0}"
+# The files of the CLI that the screensaver uses. They do not use the daemon.
+SHARED="Cache Child Config Decoder Diff FxKind Layout Log Paths Player State Upscale"
+
+install=0
+for arg in "$@"; do
+    case "$arg" in
+        --install) install=1 ;;
+        *) echo "usage: build-saver [--install]" >&2; exit 2 ;;
+    esac
+done
+
+[ "$(uname -s)" = "Darwin" ] || { echo "build-saver: the screensaver builds only on macOS" >&2; exit 1; }
+
+set --
+for name in $SHARED; do set -- "$@" "$SRC/$name.swift"; done
+
+rm -rf "$BUNDLE"
+mkdir -p "$BUNDLE/Contents/MacOS"
+swiftc -Osize -swift-version 5 -target "arm64-apple-macos$DEPLOYMENT_TARGET" \
+    -module-name MacpixelSaver -parse-as-library -emit-library -Xlinker -bundle -Xlinker -dead_strip \
+    "$SAVER"/*.swift "$@" \
+    -framework ScreenSaver -framework AppKit \
+    -o "$BUNDLE/Contents/MacOS/macpixel"
+sed -e "s/@VERSION@/$VERSION/g" -e "s/@DEPLOYMENT_TARGET@/$DEPLOYMENT_TARGET/g" \
+    "$SAVER/Info.plist.in" >"$BUNDLE/Contents/Info.plist"
+codesign --force --sign - "$BUNDLE"
+echo "Built $BUNDLE"
+
+if [ "$install" -eq 1 ]; then
+    dest="$HOME/Library/Screen Savers"
+    mkdir -p "$dest"
+    rm -rf "$dest/macpixel.saver"
+    cp -R "$BUNDLE" "$dest/"
+    echo "Installed $dest/macpixel.saver"
+fi

@@ -116,14 +116,18 @@ enum Decoder {
         (seconds.isNaN || seconds < 0.02) ? 100 : Int((seconds * 1000).rounded())
     }
 
+    /// SHA-256 of the file bytes, in hex (SPEC §6 step 1). The name of the cache file.
+    static func hash(path: String) throws -> String {
+        try autoreleasepool {
+            let data = try Data(contentsOf: URL(fileURLWithPath: path), options: .alwaysMapped)
+            return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        }
+    }
+
     /// Returns a valid cache file for `path`. Decodes in a child process if needed.
     /// Call on a background queue.
     static func load(path: String) throws -> (hash: String, cache: CacheFile) {
-        let url = URL(fileURLWithPath: path)
-        let hash = try autoreleasepool {
-            let data = try Data(contentsOf: url, options: .alwaysMapped)
-            return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        }
+        let hash = try hash(path: path)
         let dst = Cache.url(hash: hash)
         if FileManager.default.fileExists(atPath: dst.path) {
             if let c = try? CacheFile(url: dst) { return (hash, c) }

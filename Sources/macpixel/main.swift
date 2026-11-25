@@ -41,7 +41,7 @@ func parseArgs(_ args: ArraySlice<String>, options: Set<String>) -> ([String], [
 
 func screenArg(_ o: [String: String]) -> String {
     let s = o["screen"] ?? "all"
-    guard Daemon.targetKey(s) != nil else { usage() }
+    guard State.key(s) != nil else { usage() }
     return s
 }
 
@@ -95,10 +95,15 @@ case "decode":
 case "still":
     // Internal: one PNG of frame 0 for the macOS desktop picture (SPEC §16).
     let a = Array(cliRest)
-    guard a.count == 4, let w = Int(a[2]), let h = Int(a[3]) else { usage() }
+    guard a.count == 4 || a.count == 6, let w = Int(a[2]), let h = Int(a[3]) else { usage() }
+    var bar: (px: Int, color: UInt32)?
+    if a.count == 6 {
+        guard let px = Int(a[4]), (1...h).contains(px), let c = Target.parseColor(a[5]) else { usage() }
+        bar = (px, c)
+    }
     Child.main {
         try SystemWallpaper.renderStill(cache: URL(fileURLWithPath: a[0]), to: URL(fileURLWithPath: a[1]),
-                                        width: w, height: h)
+                                        width: w, height: h, bar: bar)
     }
 case "still-color":
     let a = Array(cliRest)

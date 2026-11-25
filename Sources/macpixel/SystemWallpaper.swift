@@ -14,6 +14,8 @@ final class SystemWallpaper {
     private var making = Set<String>()
     private let queue: DispatchQueue
     private var token: NSObjectProtocol?
+    /// The `menubar` colour of the config.
+    var menubar: UInt32?
 
     /// Files that the cache eviction must keep.
     var files: Set<String> { Set(want.values.map(\.url.path)) }
@@ -36,9 +38,15 @@ final class SystemWallpaper {
         if let p = s.player {
             if p.pixelArt {
                 // Pixel art: one PNG of the screen size, with the scale and the cut of the layer.
-                let url = Cache.dir.appendingPathComponent("\(p.key)-\(px.w)x\(px.h).png")
+                var name = "\(p.key)-\(px.w)x\(px.h)", bar: [String] = []
+                if let menubar, s.barPixels > 0 {
+                    let hex = String(format: "%06X", menubar)
+                    name += "-\(s.barPixels)-\(hex)"
+                    bar = [String(s.barPixels), hex]
+                }
+                let url = Cache.dir.appendingPathComponent(name + ".png")
                 want[s.id] = Want(url: url, fill: false,
-                                  make: ["still", p.cacheURL, url.path, String(px.w), String(px.h)])
+                                  make: ["still", p.cacheURL, url.path, String(px.w), String(px.h)] + bar)
             } else {
                 want[s.id] = Want(url: URL(fileURLWithPath: p.path), fill: true, make: nil)
             }
@@ -90,12 +98,14 @@ final class SystemWallpaper {
     // MARK: Child process
 
     /// Writes frame 0 of a pixel-art cache file as a PNG of the screen size (pixels).
-    static func renderStill(cache: URL, to dst: URL, width: Int, height: Int) throws {
+    /// `bar`: the menu bar strip, `px` rows of `color` at the top.
+    static func renderStill(cache: URL, to dst: URL, width: Int, height: Int,
+                            bar: (px: Int, color: UInt32)? = nil) throws {
         let c = try CacheFile(url: cache)
         guard (1...Cache.maxSide).contains(width), (1...Cache.maxSide).contains(height) else {
             throw MCWError.decode("bad size \(width)x\(height)")
         }
-        let at = Screens.placement(art: (c.width, c.height), screen: (width, height))
+        let at = Layout.placement(art: (c.width, c.height), screen: (width, height))
         let buf = calloc(c.width * c.height * 4, 1)!, scratch = malloc(Blit.scratchSize)!
         defer { free(buf); free(scratch) }
         Blit.apply(c, frame: 0, base: buf, stride: c.width * 4, scratch: scratch, tmp: nil)
@@ -103,6 +113,10 @@ final class SystemWallpaper {
               let out = bitmap(width, height) else { throw MCWError.decode("cannot create bitmap context") }
         out.interpolationQuality = .none
         out.draw(art, in: CGRect(x: at.x, y: at.y, width: c.width * at.k, height: c.height * at.k))
+        if let bar {
+            out.setFillColor(Layout.color(bar.color))
+            out.fill(CGRect(x: 0, y: height - bar.px, width: width, height: bar.px))
+        }
         try write(out, dst)
     }
 

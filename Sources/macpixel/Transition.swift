@@ -58,7 +58,7 @@ final class Transition {
     /// The smallest whole-number scale where the grid covers the screen, and the grid
     /// origin. Sizes in pixels.
     static func placement(screen: (w: Int, h: Int)) -> (k: Int, x: Int, y: Int) {
-        Screens.placement(art: (Effect.gridW, Effect.gridH), screen: screen)
+        Layout.placement(art: (Effect.gridW, Effect.gridH), screen: screen)
     }
 
     private static func replica(_ l: CALayer) -> CALayer {
