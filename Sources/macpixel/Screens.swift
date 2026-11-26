@@ -47,13 +47,42 @@ final class Screens {
     }
 
     /// Height (points) of the menu bar area: the notch area, or else the menu bar. 0 when there is none.
-    static func barHeight(_ s: NSScreen) -> CGFloat {
-        barHeight(frame: s.frame, visible: s.visibleFrame, safeTop: s.safeAreaInsets.top)
+    /// `window`: the height of the menu bar window of the display (see `menuBars`).
+    static func barHeight(_ s: NSScreen, window: CGFloat) -> CGFloat {
+        barHeight(frame: s.frame, visible: s.visibleFrame, safeTop: s.safeAreaInsets.top, window: window)
     }
 
     /// Height (points) of the menu bar area from the frames of a screen. Never less than 0.
-    static func barHeight(frame: CGRect, visible: CGRect, safeTop: CGFloat = 0) -> CGFloat {
-        max(0, safeTop, frame.maxY - visible.maxY)
+    static func barHeight(frame: CGRect, visible: CGRect, safeTop: CGFloat = 0, window: CGFloat = 0) -> CGFloat {
+        max(0, safeTop, frame.maxY - visible.maxY, window)
+    }
+
+    /// Height (points) of the menu bar window of the window server on each display.
+    /// When the displays do not have separate Spaces, a screen that is not the main screen
+    /// can have a menu bar that its `visibleFrame` does not include. Layer and bounds only:
+    /// they need no screen recording permission. One call per reconcile.
+    static func menuBars(_ ids: [CGDirectDisplayID]) -> [CGDirectDisplayID: CGFloat] {
+        let level = Int(CGWindowLevelForKey(.mainMenuWindow))
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                    kCGNullWindowID) as? [[String: Any]] else { return [:] }
+        let windows: [CGRect] = list.compactMap { w in
+            guard (w[kCGWindowLayer as String] as? Int) == level,
+                  let d = w[kCGWindowBounds as String] as? NSDictionary else { return nil }
+            return CGRect(dictionaryRepresentation: d as CFDictionary)
+        }
+        return menuBars(windows, displays: ids.map { ($0, CGDisplayBounds($0)) })
+    }
+
+    /// A menu bar window starts at the top of its display and has the width of the display.
+    /// Bounds in global display coordinates (origin top left).
+    static func menuBars(_ windows: [CGRect], displays: [(CGDirectDisplayID, CGRect)]) -> [CGDirectDisplayID: CGFloat] {
+        var out: [CGDirectDisplayID: CGFloat] = [:]
+        for (id, b) in displays {
+            for r in windows where r.minY == b.minY && r.minX == b.minX && r.width == b.width && r.height < b.height {
+                out[id] = max(out[id] ?? 0, r.height)
+            }
+        }
+        return out
     }
 
     func start() {
@@ -78,10 +107,11 @@ final class Screens {
 
     func reconcile() {
         var seen = Set<CGDirectDisplayID>()
+        let bars = menubar == nil ? [:] : Screens.menuBars(NSScreen.screens.compactMap(Screens.displayID))
         for s in NSScreen.screens {
             guard let id = Screens.displayID(s) else { continue }
             seen.insert(id)
-            let bar = Screens.barHeight(s)
+            let bar = Screens.barHeight(s, window: bars[id] ?? 0)
             if let e = all[id] {
                 guard e.window.frame != s.frame || e.scale != s.backingScaleFactor
                     || e.barHeight != bar else { continue }

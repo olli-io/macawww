@@ -38,6 +38,19 @@ final class ScreensTests: XCTestCase {
         // A second screen above the main screen.
         let top = CGRect(x: 0, y: 982, width: 1920, height: 1080)
         XCTAssertEqual(Screens.barHeight(frame: top, visible: CGRect(x: 0, y: 982, width: 1920, height: 1055)), 25)
+        // A second screen without separate Spaces: the visible frame has no menu bar, the window has one.
+        XCTAssertEqual(Screens.barHeight(frame: frame, visible: frame, window: 30), 30)
+    }
+
+    func testMenuBarWindows() {
+        let d1 = CGRect(x: 0, y: 0, width: 1470, height: 956), d2 = CGRect(x: 1470, y: 0, width: 2560, height: 1440)
+        let windows = [CGRect(x: 0, y: 0, width: 1470, height: 33),     // menu bar of d1
+                       CGRect(x: 1470, y: 0, width: 2560, height: 30),  // menu bar of d2
+                       CGRect(x: 1600, y: 0, width: 300, height: 30),   // not the full width
+                       CGRect(x: 1470, y: 40, width: 2560, height: 30), // not at the top
+                       CGRect(x: 1470, y: 0, width: 2560, height: 1440)] // full screen
+        XCTAssertEqual(Screens.menuBars(windows, displays: [(1, d1), (2, d2)]), [1: 33, 2: 30])
+        XCTAssertEqual(Screens.menuBars([], displays: [(1, d1)]), [:])
     }
 
     func testPlacement() {

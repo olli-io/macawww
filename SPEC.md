@@ -91,7 +91,8 @@ One window per screen:
 
 Optional. When the `menubar` key of `config` (§11) has a colour, the root layer of each window has one more sublayer: a strip of that colour at the top of the screen.
 
-- Height = the menu bar area in points: `max(safeAreaInsets.top, frame.maxY - visibleFrame.maxY)`. Thus a screen with a notch always has the strip. A screen without a notch and with a hidden menu bar has none (height 0).
+- Height = the menu bar area in points: `max(safeAreaInsets.top, frame.maxY - visibleFrame.maxY, <menu bar window>)`. Thus a screen with a notch always has the strip. A screen without a notch and with a hidden menu bar has none (height 0).
+- `<menu bar window>`: the height of the window of the window server at the main menu level (`CGWindowLevelForKey(.mainMenuWindow)`) that starts at the top of the display and has its width. When the displays do not have separate Spaces, macOS shows a menu bar on each display, but the `visibleFrame` of a screen that is not the main screen does not include it. One `CGWindowListCopyWindowInfo` call per reconcile (§10), only when `menubar` is set. Layer and bounds only: no screen recording permission is necessary.
 - `zPosition = 1`: the strip is above the image layer and above the layers of a transition (§17).
 - The strip has no contents and never changes per frame. It hides the wallpaper rows below it; the scale and the position of the wallpaper do not change.
 - The macOS menu bar is translucent, so it shows this colour.
@@ -316,7 +317,7 @@ Unit:
 - Integer upscale: factor, block check, point sample, decode restart with a smaller factor.
 - `check`: factor of a PNG, factor over all frames, list of a directory, exit code.
 - Integer scale per screen: k for exact fit, for cut, and for art larger than the screen.
-- Menu bar height: with a menu bar, without a menu bar, with a notch.
+- Menu bar height: with a menu bar, without a menu bar, with a notch, from the menu bar window; selection of the menu bar windows.
 - Still PNG for the macOS desktop picture: size, scale and cut are equal to the layer, menu bar strip.
 - Double-buffer invariant over 3 loops, including 1, 2 and 3 frame animations.
 - Transitions: gradients, burn order, flood order, tile order, start and end of each kind, grid pixels, pieces, slide timing, grey, grid placement.
